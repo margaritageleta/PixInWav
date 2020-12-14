@@ -22,7 +22,7 @@ print('PyTorch version:', torch.__version__)
 
 class ImageProcessor():
     def __init__(self, image_path):
-        self.image = Image.open(image_path).convert('RGB'))
+        self.image = Image.open(image_path).convert('RGB')
 
     def crop(self, proportion = 2 ** 6):
         nx, ny = self.image.size
@@ -58,8 +58,12 @@ class ImageDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         img_path = glob.glob(f'{self._data}/{self._indices[index][0]}/*_{self._indices[index][1]}.{self.extension}')[0]
         print(f'READING: {img_path}')
-        img = ImageProcessor(img_path).forward()
-        return img
+        try:
+            img = ImageProcessor(img_path).forward()
+            return img
+        except Exception as e:
+            print(e)
+            pass
 
 def plot_samples(dataset):
     fig = plt.figure()
@@ -87,8 +91,20 @@ if __name__ == '__main__':
 
     plot_samples(dataset)
 
+    with open(f'{MY_FOLDER}/data/imagenet_train.data', 'wb') as f:
+        pickle.dump(dataset, f, protocol=pickle.HIGHEST_PROTOCOL)
+
     print('Dataset prepared')
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
+    dataloader = torch.utils.data.DataLoader(dataset,
+                                             batch_size=64,
+                                             shuffle=True,
+                                             num_workers=4,
+                                             pin_memory=True)
     print('Data loaded ++')
+
+    # for i, batch in enumerate(dataloader):
+    #    print(i, batch)
+
+    print(len(dataloader.dataset))
 
 
