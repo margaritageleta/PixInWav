@@ -41,13 +41,13 @@ class AudioProcessor():
         # Corresponds to 1.5 seconds approximately
         self._limit = 2 ** 16 + 2 ** 11 - 1
         self._frame_length = 2 ** 12
-        self._frame_step = 2 ** 6
+        self._frame_step = 2 ** 6 - 2
 
     def forward(self):
         # Get the samples dimension
         sound = self.sound[0]
         # Create a temporary array
-        tmp = torch.zeros([self._limit, ]).normal_(mean=0, std=0.005)
+        tmp = torch.zeros([self._limit, ]).normal_(mean = 0, std = 0.005)
         # Cut the audio on limit
         if sound.numel() < self._limit:
             tmp[:sound.numel()] = sound[:]
