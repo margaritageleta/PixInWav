@@ -71,7 +71,7 @@ class StegoDataset(torch.utils.data.Dataset):
         # self._image_data_path = pathlib.Path(image_root) / folder
         self._image_data_path = pathlib.Path(image_root) / 'train'
         self._audio_data_path = pathlib.Path(f'{audio_root}{folder}')
-        self._MAX_LIMIT = 10000
+        self._MAX_LIMIT = 200
         self._MAX_AUDIO_LIMIT = 17584 if folder == 'train' else 946
 
         print(f'IMAGE DATA LOCATED AT: {self._image_data_path}')
@@ -116,7 +116,7 @@ class StegoDataset(torch.utils.data.Dataset):
         # print(f'{rand_indexer} < {self._MAX_AUDIO_LIMIT}')
         audio_path = self._audios[rand_indexer]
 
-        img = np.array(ImageProcessor(img_path).forward())
+        img = np.array(ImageProcessor(img_path).forward()).astype('float64') 
         sound_stct = AudioProcessor(audio_path).forward()
 
         return (img, sound_stct)
@@ -135,7 +135,7 @@ def loader(set = 'train'):
                            mappings=mappings)
     print('Dataset prepared')
     dataloader = torch.utils.data.DataLoader(dataset,
-                                             batch_size=64,
+                                             batch_size=32,
                                              shuffle=True,
                                              num_workers=4,
                                              pin_memory=True)
