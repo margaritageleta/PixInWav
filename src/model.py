@@ -89,7 +89,6 @@ class HidingNet(nn.Module):
 		)
 
 	def forward(self, x):
-		print(x.shape)
 		features3x3 = self.features3x3(x)
 		features4x4 = self.features4x4(x)
 		features5x5 = self.features5x5(x)
@@ -166,9 +165,12 @@ class StegoNet(nn.Module):
 		self.RN = RevealNet()
 
 	def forward(self, secret, cover):
+		# print('Process Network working ...')
 		cover_features = self.PN(cover)
 		concat = torch.cat((cover_features, secret), 1)
+		# print('Hiding Network working ...')
 		container = self.HN(concat)
+		# print('Reveal Network working ...')
 		revealed = self.RN(container)
 
 		return container, revealed
