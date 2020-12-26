@@ -14,7 +14,7 @@ import gc # garbage collector
 
 MY_FOLDER = '/mnt/gpid07/imatge/margarita.geleta/pix2wav'
 LOGDIR = os.path.join("logs", datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
-LOGDIR = os.path.join("logs", '20201225-192204')
+# LOGDIR = os.path.join("logs", '20201225-192204')
 writer = SummaryWriter(log_dir=LOGDIR)
 print(LOGDIR)
 
@@ -92,7 +92,7 @@ def train(dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
 			writer.add_scalar(f'cover_{epoch + 1}/train_loss', avg_train_loss_cover, i + 1)
 			writer.add_scalar(f'secret_{epoch + 1}/train_loss', avg_train_loss_secret, i + 1)
 
-			if i % 100 == 0:
+			if i % 50 == 0:
 				save_checkpoint({
 					'epoch': epoch + 1,
 					'state_dict': model.state_dict(),
@@ -100,7 +100,7 @@ def train(dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
 					'beta': beta,
 					'lr': lr,
 					'i': i + 1,
-				}, is_best = True, filename=f'{MY_FOLDER}/checkpoints/checkpoint_run3_{epoch + 1}_{i + 1}.pt')
+				}, is_best = True, filename=f'{MY_FOLDER}/checkpoints/checkpoint_leaky_run1_{epoch + 1}_{i + 1}.pt')
 
 			print(('='* (i+1)) + f' {datalen - (i+1)} left to scan')
 			print(f'Train Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
@@ -134,16 +134,17 @@ if __name__ == '__main__':
 	train_loader = loader(set = 'train')
 	# test_loader = loader(set = 'test')
 
-	chk = torch.load(f'{MY_FOLDER}/checkpoints/checkpoint_run2_1_901.pt', map_location='cpu')
+	# chk = torch.load(f'{MY_FOLDER}/checkpoints/checkpoint_run2_1_901.pt', map_location='cpu')
 	model = StegoNet()
-	model.load_state_dict(chk['state_dict'])
+	# model.load_state_dict(chk['state_dict'])
 
 	# take one batch from the training loader
-	# secrets, covers = next(iter(train_loader))
-	# secrets = secrets.permute(0, 3, 1, 2).type(torch.FloatTensor)
-	# covers = covers.unsqueeze(1)
+	secrets, covers = next(iter(train_loader))
+	secrets = secrets.permute(0, 3, 1, 2).type(torch.FloatTensor)
+	covers = covers.unsqueeze(1)
 
 	# We need to pass a batch of data along with the model
-	# writer.add_graph(model, (secrets, covers), verbose = False)
+	writer.add_graph(model, (secrets, covers), verbose = False)
 
-	train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = chk['epoch'], prev_i = chk['i'])
+	# train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = chk['epoch'], prev_i = chk['i'])
+	train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = None, prev_i = None)
