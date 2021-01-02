@@ -9,6 +9,7 @@ from time import time
 import datetime
 from tensorboardX import SummaryWriter
 import matplotlib.pyplot as plt
+from pystct import isdct
 
 import gc # garbage collector
 
@@ -47,7 +48,16 @@ def stego_loss(secret, cover, container, revealed, beta):
 
 	loss_cover = F.mse_loss(cover, container)
 	loss_secret = F.mse_loss(secret, revealed)
-	loss = loss_cover + beta * loss_secret
+	loss = (1 - beta) * loss_cover + beta * loss_secret
+	return loss, loss_cover, loss_secret
+
+def stego_loss_wav(secret, cover, container, revealed, beta):
+	cover_wav = torch.tensor(isdct(cover.squeeze(0).squeeze(0).detach().numpy(), frame_step=62))
+	container_wav = torch.tensor(isdct(container.squeeze(0).squeeze(0).detach().numpy(), frame_step=62))
+	loss_cover = torch.autograd.Variable(torch.abs(cover_wav - container_wav).sum(), requires_grad=True)
+	loss_secret = F.mse_loss(secret, revealed)
+
+	loss = (1 - beta) * loss_cover + beta * loss_secret
 	return loss, loss_cover, loss_secret
 
 def train(dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
@@ -74,7 +84,7 @@ def train(dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
 			optimizer.zero_grad()
 			containers, revealed = model(secrets, covers)
 
-			loss, loss_cover, loss_secret = stego_loss(secrets, covers, containers, revealed, beta)
+			loss, loss_cover, loss_secret = stego_loss_wav(secrets, covers, containers, revealed, beta)
 
 			loss.backward()
 			optimizer.step()
@@ -100,7 +110,7 @@ def train(dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
 					'beta': beta,
 					'lr': lr,
 					'i': i + 1,
-				}, is_best = True, filename=f'{MY_FOLDER}/checkpoints/checkpoint_leaky_run1_{epoch + 1}_{i + 1}.pt')
+				}, is_best = True, filename=f'{MY_FOLDER}/checkpoints/checkpoint_leaky_wav_run1_{epoch + 1}_{i + 1}.pt')
 
 			print(('='* (i+1)) + f' {datalen - (i+1)} left to scan')
 			print(f'Train Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
@@ -147,4 +157,4 @@ if __name__ == '__main__':
 	writer.add_graph(model, (secrets, covers), verbose = False)
 
 	# train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = chk['epoch'], prev_i = chk['i'])
-	train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = None, prev_i = None)
+	train(train_loader, beta = 0.1, lr = 0.001, epochs = 5, prev_epoch = None, prev_i = None)
