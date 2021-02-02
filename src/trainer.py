@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 from loader import loader
-from model import StegoNet
+from umodel import StegoUNet
 import torch.optim as optim
 from time import time
 import datetime
@@ -60,12 +60,13 @@ def stego_loss_wav(secret, cover, container, revealed, beta):
 	loss = (1 - beta) * loss_cover + beta * loss_secret
 	return loss, loss_cover, loss_secret
 
-def train(dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
+def train(model, dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
 	optimizer = optim.Adam(model.parameters(), lr=lr)
 
 	ini = time()
 	best_loss = np.inf
 	datalen = len(dataloader)
+
 	for epoch in range(epochs):
 
 		if prev_epoch != None and epoch < prev_epoch - 1: continue
@@ -78,13 +79,13 @@ def train(dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
 			if prev_i != None and i < prev_i - 1: continue
 
 			secrets, covers = data[0], data[1]
-			secrets = secrets.permute(0,3,1,2).type(torch.FloatTensor)
+			secrets = secrets.unsqueeze(1).type(torch.FloatTensor)
 			covers = covers.unsqueeze(1)
 
 			optimizer.zero_grad()
 			containers, revealed = model(secrets, covers)
 
-			loss, loss_cover, loss_secret = stego_loss_wav(secrets, covers, containers, revealed, beta)
+			loss, loss_cover, loss_secret = stego_loss(secrets, covers, containers, revealed, beta)
 
 			loss.backward()
 			optimizer.step()
@@ -110,7 +111,7 @@ def train(dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
 					'beta': beta,
 					'lr': lr,
 					'i': i + 1,
-				}, is_best = True, filename=f'{MY_FOLDER}/checkpoints/checkpoint_leaky_wav_run1_{epoch + 1}_{i + 1}.pt')
+				}, is_best = True, filename=f'{MY_FOLDER}/checkpoints/checkpoint_unet_run1_{epoch + 1}_{i + 1}.pt')
 
 			print(('='* (i+1)) + f' {datalen - (i+1)} left to scan')
 			print(f'Train Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
@@ -145,16 +146,17 @@ if __name__ == '__main__':
 	# test_loader = loader(set = 'test')
 
 	# chk = torch.load(f'{MY_FOLDER}/checkpoints/checkpoint_run2_1_901.pt', map_location='cpu')
-	model = StegoNet()
+	model = StegoUNet()
 	# model.load_state_dict(chk['state_dict'])
 
 	# take one batch from the training loader
 	secrets, covers = next(iter(train_loader))
-	secrets = secrets.permute(0, 3, 1, 2).type(torch.FloatTensor)
+	secrets = secrets.unsqueeze(1)
 	covers = covers.unsqueeze(1)
+	# print(secrets.shape, covers.shape)
 
 	# We need to pass a batch of data along with the model
-	writer.add_graph(model, (secrets, covers), verbose = False)
+	# writer.add_graph(model, (secrets.detach(), covers.detach()), verbose = False)
 
 	# train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = chk['epoch'], prev_i = chk['i'])
-	train(train_loader, beta = 0.1, lr = 0.001, epochs = 5, prev_epoch = None, prev_i = None)
+	train(model, train_loader, beta = 0.2, lr = 0.001, epochs = 5, prev_epoch = None, prev_i = None)
