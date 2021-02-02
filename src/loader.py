@@ -18,7 +18,7 @@ MY_DATA_FOLDER = f'{MY_FOLDER}/data'
 
 class ImageProcessor():
     def __init__(self, image_path):
-        self.image = Image.open(image_path).convert('RGB')
+        self.image = Image.open(image_path).convert('L')
 
     def crop(self, proportion = 2 ** 6):
         nx, ny = self.image.size
@@ -30,9 +30,13 @@ class ImageProcessor():
     def scale(self, n = 256):
         self.image = self.image.resize((n, n), Image.ANTIALIAS)
 
+    def normalize(self):
+        self.image = np.array(self.image).astype('float') / 255.0
+
     def forward(self):
         self.crop()
         self.scale()
+        self.normalize()
         return self.image
 
 class AudioProcessor():
@@ -116,7 +120,7 @@ class StegoDataset(torch.utils.data.Dataset):
         # print(f'{rand_indexer} < {self._MAX_AUDIO_LIMIT}')
         audio_path = self._audios[rand_indexer]
 
-        img = np.array(ImageProcessor(img_path).forward()).astype('float64')
+        img = np.asarray(ImageProcessor(img_path).forward()).astype('float64')
         sound_stct = AudioProcessor(audio_path).forward()
 
         return (img, sound_stct)
