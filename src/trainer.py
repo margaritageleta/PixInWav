@@ -1,9 +1,10 @@
 import os
 import gc
+import time
 import torch
 import wandb
 import numpy as np
-from time import time
+import torch.nn as nn
 from loader import loader
 import torch.optim as optim
 from umodel import StegoUNet
@@ -22,19 +23,50 @@ def save_checkpoint(state, is_best, filename=os.path.join(os.environ.get('USER_P
 		 print ("=> Loss did not improve")
 
 def compare_images(s, r):
-	s = s.permute(0,2,3,1).detach().numpy().squeeze(0).astype(np.uint8)
-	r = r.permute(0,2,3,1).detach().numpy().squeeze(0).astype(np.uint8)
+	s = s.permute(0,2,3,1).detach().numpy().squeeze(0).astype(np.float32)
+	r = r.permute(0,2,3,1).detach().numpy().squeeze(0).astype(np.float32)
 
 	fig, ax = plt.subplots(1, 2, figsize=(10, 10))
-	ax[0].imshow(s)
-	ax[1].imshow(r)
+	ax[0].imshow(s, cmap='gray')
+	ax[1].imshow(r, cmap='gray')
 	ax[0].set_title('Secret image')
 	ax[1].set_title('Revealed image')
 	ax[0].axis('off')
 	ax[1].axis('off')
-	plt.show()
+	plt.close('all')
 
 	return fig
+
+def viz2paper(s, r, cv, ct):
+    s = s.permute(0,2,3,1).detach().numpy().squeeze(0).squeeze(2).astype(np.float32)
+    r = r.permute(0,2,3,1).detach().numpy().squeeze(0).squeeze(2).astype(np.float32)
+    cv = cv.detach().numpy().squeeze(0).squeeze(0).astype(np.float32)
+    ct = ct.detach().numpy().squeeze(0).squeeze(0).astype(np.float32)
+    
+
+    fig, ax = plt.subplots(2, 2, figsize=(12, 10))
+    ax[0,0].imshow(s, cmap='gray')
+    ax[1,0].imshow(r, cmap='gray')
+    ax[0,0].set_title('Secret image')
+    ax[1,0].set_title('Revealed image')
+    ax[0,0].axis('off')
+    ax[1,0].axis('off')
+    
+    img1 = ax[0,1].imshow(np.abs(cv) [:,], origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
+    ax[0,1].set_title('Cover STCT magnitude spectrum')
+    img2 = ax[1,1].imshow(np.abs(ct)[:,], origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
+    ax[1,1].set_title('Container STCT magnitude spectrum')
+    
+    ax[0,1].set_xlabel('Time [n]')
+    ax[0,1].set_ylabel('Frequency')
+    ax[1,1].set_xlabel('Time [n]')
+    ax[1,1].set_ylabel('Frequency')
+    
+    plt.colorbar(img1, ax=ax[0,1])
+    plt.colorbar(img2, ax=ax[1,1])
+    plt.close('all')
+    
+    return fig
 
 def stego_loss(secret, cover, container, revealed, beta):
 
@@ -59,6 +91,11 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	print(f'Using device: {device}')
+
+	if torch.cuda.device_count() > 1:
+  		print("Let's use", torch.cuda.device_count(), "GPUs!")
+  		model = nn.DataParallel(model)
+
 	model.to(device)
 
 	# Set to training mode
@@ -70,7 +107,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 	optimizer = optim.Adam(model.parameters(), lr=lr)
 
-	ini = time()
+	ini = time.time()
 	best_loss = np.inf
 	datalen = len(tr_loader)
 
@@ -105,23 +142,30 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			avg_train_loss_cover = np.mean(train_loss_cover)
 			avg_train_loss_secret = np.mean(train_loss_secret)
 
-			print(f'Train Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
+			print(f'(#{i})[{np.round(time.time()-ini,2)}s] Train Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
 
 			# Log train average loss to wandb
 			wandb.log({
-				'tr_loss': avg_train_loss,
-				'tr_cover_loss': avg_train_loss_cover,
-				'tr_secret_div': avg_train_loss_secret,
+				'tr_i_loss': avg_train_loss,
+				'tr_i_cover_loss': avg_train_loss_cover,
+				'tr_i_secret_loss': avg_train_loss_secret,
 			})
 
 			# Log images
-			if i % 50 == 0:
-				fig = compare_images(secrets, revealed)
-				wandb.log({f"Image revelation at epoch {epoch}": fig})
-				validate(model, vd_loader)
+			if (i % 50 == 0) and (i != 0):
+				fig = viz2paper(secrets.cpu(), revealed.cpu(), covers.cpu(), containers.cpu())
+				wandb.log({f"Revelation at epoch {epoch}, iteration {i}": fig})
+				validate(model, vd_loader, beta)
 		
 		print (f'Epoch [{epoch + 1}/{epochs}], Average_loss: {avg_train_loss}, Average_loss_cover: {avg_train_loss_cover}, Average_loss_secret: {avg_train_loss_secret}')
 
+		# Log train average loss to wandb
+		wandb.log({
+			'tr_loss': avg_train_loss,
+			'tr_cover_loss': avg_train_loss_cover,
+			'tr_secret_loss': avg_train_loss_secret,
+		})
+		
 		is_best = bool(avg_train_loss > best_loss)
 		best_loss = min(avg_train_loss, best_loss)
 
@@ -132,13 +176,13 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			'best_loss': best_loss,
 			'beta': beta,
 			'lr': lr,
-		}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), 'checkpoints/checkpoint.pt'))
+		}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), f'checkpoints/checkpoint_run_5.pt'))
 
-	print(f"Training took {time() - ini} seconds")
-	torch.save(model.state_dict(), os.path.join(os.environ.get('USER_PATH'), 'checkpoints/final.pt'))
+	print(f"Training took {time.time() - ini} seconds")
+	torch.save(model.state_dict(), os.path.join(os.environ.get('USER_PATH'), f'checkpoints/final_run_5.pt'))
 	return model, avg_train_loss
 
-def validate(model, vd_loader, epoch=None, verbose=False):
+def validate(model, vd_loader, beta, epoch=None, verbose=False):
 
 	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	print(f'Using device: {device}')
@@ -149,10 +193,10 @@ def validate(model, vd_loader, epoch=None, verbose=False):
 	model.eval()
 	loss = 0
 
-	total_vae_loss, total_rec_loss, total_KL_div  = [], [], []
-	total_L1_loss, total_zeros_loss, total_ones_loss = [], [], []
+	valid_loss, valid_loss_cover, valid_loss_secret = [], [], []
+	datalen = len(vd_loader)
 	
-	ini = time.time()
+	iniv = time.time()
 	with torch.no_grad():
 		print('Validating current model...')
 		for i, data in enumerate(vd_loader):
@@ -169,16 +213,25 @@ def validate(model, vd_loader, epoch=None, verbose=False):
 			valid_loss_cover.append(loss_cover.detach().item())
 			valid_loss_secret.append(loss_secret.detach().item())
 
-			avg_valid_loss = np.mean(valid_loss)
-			avg_valid_loss_cover = np.mean(valid_loss_cover)
-			avg_valid_loss_secret = np.mean(valid_loss_secret)
+			print(f'(#{i})[{np.round(time.time()-iniv,2)}s] Valid Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
 
-			wandb.log({
-				'vd_loss': avg_valid_loss,
-				'vd_cover_loss': avg_valid_loss_cover,
-				'vd_secret_div': avg_valid_loss_secret,
-			})
-			print(f'Valid Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
+			if i >= int(datalen//8): break
+
+		avg_valid_loss = np.mean(valid_loss)
+		avg_valid_loss_cover = np.mean(valid_loss_cover)
+		avg_valid_loss_secret = np.mean(valid_loss_secret)
+
+		wandb.log({
+			'vd_loss': avg_valid_loss,
+			'vd_cover_loss': avg_valid_loss_cover,
+			'vd_secret_loss': avg_valid_loss_secret,
+		})
+		print(f"Validation took {time.time() - iniv} seconds")
+
+	del valid_loss
+	del valid_loss_cover
+	del valid_loss_secret
+	gc.collect()
 			
 
 if __name__ == '__main__':
@@ -195,4 +248,4 @@ if __name__ == '__main__':
 		model=model, 
 		tr_loader=train_loader, 
 		vd_loader=test_loader, 
-		beta = 0.2, lr = 0.001, epochs = 5, prev_epoch = None, prev_i = None)
+		beta = 0.1, lr = 0.0001, epochs = 5, prev_epoch = None, prev_i = None)

@@ -1,3 +1,8 @@
 DATA/*
 data/*
 env/*
+scripts/wandb/*
+src/wandb/*
+src/__pycache__/*
+notebooks/*
+src/__pycache__/*
