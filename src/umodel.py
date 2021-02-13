@@ -23,7 +23,7 @@ class DoubleConv(nn.Module):
         # print(8*'='+'DOUBLE CONV')
         # print(8*'-'+f'Starting shape ({x.shape[1]}x{x.shape[2]}x{x.shape[3]})')
         x = self.conv1(x)
-        #x = self.conv2(x)
+        x = self.conv2(x)
         # print(8*'-'+f'Final shape ({x.shape[1]}x{x.shape[2]}x{x.shape[3]})')
         return x
 
@@ -126,10 +126,10 @@ class RevealNet(nn.Module):
             Down(64, 64 * 2)
         ])
 
-        self.decoder_layers = [
+        self.decoder_layers = nn.ModuleList([
             Up(64 * 2, 64, image_alone=True),
             Up(64, 1, image_alone=True)
-        ]
+        ])
 
     def forward(self, ct):
 
@@ -157,11 +157,11 @@ class StegoUNet(nn.Module):
     def forward(self, secret, cover):
         # print('Process + Hiding Network working ...')
         hidden_signal = self.PHN(secret, cover)
-
+        # print('Pre Process ...')
         container = cover + hidden_signal
 
         # print('Reveal Network working ...')
         revealed = self.RN(container)
-
+        # print('DONE! ...')
+        
         return container, revealed
-
