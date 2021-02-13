@@ -1,35 +1,27 @@
 import os
+import gc
 import torch
+import wandb
 import numpy as np
-import torch.nn.functional as F
-from loader import loader
-from umodel import StegoUNet
-import torch.optim as optim
 from time import time
-import datetime
-from tensorboardX import SummaryWriter
+from loader import loader
+import torch.optim as optim
+from umodel import StegoUNet
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from pystct import isdct
 
-import gc # garbage collector
-
-MY_FOLDER = '/mnt/gpid07/imatge/margarita.geleta/pix2wav'
-LOGDIR = os.path.join("logs", datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
-# LOGDIR = os.path.join("logs", '20201225-192204')
-writer = SummaryWriter(log_dir=LOGDIR)
-print(LOGDIR)
-
 # assert(True == False)
 
-def save_checkpoint(state, is_best, filename=f'{MY_FOLDER}/checkpoints/checkpoint.pt'):
-     """Save checkpoint if a new best is achieved"""
-     if is_best:
-         print ("=> Saving a new best model")
-         torch.save(state, filename)  # save checkpoint
-     else:
-         print ("=> Loss did not improve")
+def save_checkpoint(state, is_best, filename=os.path.join(os.environ.get('USER_PATH'),'/data/checkpoints/checkpoint.pt')):
+	 """Save checkpoint if a new best is achieved"""
+	 if is_best:
+		 print ("=> Saving a new best model")
+		 torch.save(state, filename)  # save checkpoint
+	 else:
+		 print ("=> Loss did not improve")
 
-def compare_images(s, r, epoch):
+def compare_images(s, r):
 	s = s.permute(0,2,3,1).detach().numpy().squeeze(0).astype(np.uint8)
 	r = r.permute(0,2,3,1).detach().numpy().squeeze(0).astype(np.uint8)
 
@@ -42,7 +34,7 @@ def compare_images(s, r, epoch):
 	ax[1].axis('off')
 	plt.show()
 
-	writer.add_figure('Image revelation', fig, epoch)
+	return fig
 
 def stego_loss(secret, cover, container, revealed, beta):
 
@@ -60,29 +52,44 @@ def stego_loss_wav(secret, cover, container, revealed, beta):
 	loss = (1 - beta) * loss_cover + beta * loss_secret
 	return loss, loss_cover, loss_secret
 
-def train(model, dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
+def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None):
+
+	wandb.init(project='PixInWav')
+	wandb.watch(model)
+
+	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+	print(f'Using device: {device}')
+	model.to(device)
+
+	# Set to training mode
+	model.train()
+
+	# This is the number of parameters used in the model
+	num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+	print(f'Number of model parameters: {num_params}')
+
 	optimizer = optim.Adam(model.parameters(), lr=lr)
 
 	ini = time()
 	best_loss = np.inf
-	datalen = len(dataloader)
+	datalen = len(tr_loader)
 
 	for epoch in range(epochs):
 
 		if prev_epoch != None and epoch < prev_epoch - 1: continue
 
 		train_loss, train_loss_cover, train_loss_secret = [], [], []
-		model.train()
 
-		for i, data in enumerate(dataloader):
+		for i, data in enumerate(tr_loader):
 
 			if prev_i != None and i < prev_i - 1: continue
 
-			secrets, covers = data[0], data[1]
-			secrets = secrets.unsqueeze(1).type(torch.FloatTensor)
+			secrets, covers = data[0].to(device), data[1].to(device)
+			secrets = secrets.unsqueeze(1).type(torch.cuda.FloatTensor)
 			covers = covers.unsqueeze(1)
 
 			optimizer.zero_grad()
+
 			containers, revealed = model(secrets, covers)
 
 			loss, loss_cover, loss_secret = stego_loss(secrets, covers, containers, revealed, beta)
@@ -98,34 +105,26 @@ def train(model, dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = Non
 			avg_train_loss_cover = np.mean(train_loss_cover)
 			avg_train_loss_secret = np.mean(train_loss_secret)
 
-			# Log train average loss to tensorboard
-			writer.add_scalar(f'stego_{epoch + 1}/train_loss', avg_train_loss, i + 1)
-			writer.add_scalar(f'cover_{epoch + 1}/train_loss', avg_train_loss_cover, i + 1)
-			writer.add_scalar(f'secret_{epoch + 1}/train_loss', avg_train_loss_secret, i + 1)
-
-			if i % 50 == 0:
-				save_checkpoint({
-					'epoch': epoch + 1,
-					'state_dict': model.state_dict(),
-					'best_loss': best_loss,
-					'beta': beta,
-					'lr': lr,
-					'i': i + 1,
-				}, is_best = True, filename=f'{MY_FOLDER}/checkpoints/checkpoint_unet_run1_{epoch + 1}_{i + 1}.pt')
-
-			print(('='* (i+1)) + f' {datalen - (i+1)} left to scan')
 			print(f'Train Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
-			print (f'Epoch [{epoch + 1}/{epochs}], Average_loss: {avg_train_loss}, Average_loss_cover: {avg_train_loss_cover}, Average_loss_secret: {avg_train_loss_secret}')
 
-		# Log train average loss to tensorboard
-		writer.add_scalar('stego/train_loss', avg_train_loss, epoch + 1)
-		writer.add_scalar('cover/train_loss', avg_train_loss_cover, epoch + 1)
-		writer.add_scalar('secret/train_loss', avg_train_loss_secret, epoch + 1)
-		# Log images
-		compare_images(secrets, revealed, epoch + 1)
+			# Log train average loss to wandb
+			wandb.log({
+				'tr_loss': avg_train_loss,
+				'tr_cover_loss': avg_train_loss_cover,
+				'tr_secret_div': avg_train_loss_secret,
+			})
 
-		is_best = bool(avg_train_loss.detach().cpu() > best_loss)
-		best_loss = min(avg_train_loss.detach().cpu(), best_loss)
+			# Log images
+			if i % 50 == 0:
+				fig = compare_images(secrets, revealed)
+				wandb.log({f"Image revelation at epoch {epoch}": fig})
+				validate(model, vd_loader)
+		
+		print (f'Epoch [{epoch + 1}/{epochs}], Average_loss: {avg_train_loss}, Average_loss_cover: {avg_train_loss_cover}, Average_loss_secret: {avg_train_loss_secret}')
+
+		is_best = bool(avg_train_loss > best_loss)
+		best_loss = min(avg_train_loss, best_loss)
+
 		# Save checkpoint if is a new best
 		save_checkpoint({
 			'epoch': epoch + 1,
@@ -133,30 +132,67 @@ def train(model, dataloader, beta, lr, epochs=5, prev_epoch = None, prev_i = Non
 			'best_loss': best_loss,
 			'beta': beta,
 			'lr': lr,
-		}, is_best)
+		}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), 'checkpoints/checkpoint.pt'))
 
 	print(f"Training took {time() - ini} seconds")
-	torch.save(model.state_dict(), f'{MY_FOLDER}/models/monster_1_{epochs}_run1.pt')
+	torch.save(model.state_dict(), os.path.join(os.environ.get('USER_PATH'), 'checkpoints/final.pt'))
 	return model, avg_train_loss
 
+def validate(model, vd_loader, epoch=None, verbose=False):
+
+	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+	print(f'Using device: {device}')
+
+	model.to(device)
+
+	# Set to evaluation mode
+	model.eval()
+	loss = 0
+
+	total_vae_loss, total_rec_loss, total_KL_div  = [], [], []
+	total_L1_loss, total_zeros_loss, total_ones_loss = [], [], []
+	
+	ini = time.time()
+	with torch.no_grad():
+		print('Validating current model...')
+		for i, data in enumerate(vd_loader):
+
+			secrets, covers = data[0].to(device), data[1].to(device)
+			secrets = secrets.unsqueeze(1).type(torch.cuda.FloatTensor)
+			covers = covers.unsqueeze(1)
+
+			containers, revealed = model(secrets, covers)
+
+			loss, loss_cover, loss_secret = stego_loss(secrets, covers, containers, revealed, beta)
+
+			valid_loss.append(loss.detach().item())
+			valid_loss_cover.append(loss_cover.detach().item())
+			valid_loss_secret.append(loss_secret.detach().item())
+
+			avg_valid_loss = np.mean(valid_loss)
+			avg_valid_loss_cover = np.mean(valid_loss_cover)
+			avg_valid_loss_secret = np.mean(valid_loss_secret)
+
+			wandb.log({
+				'vd_loss': avg_valid_loss,
+				'vd_cover_loss': avg_valid_loss_cover,
+				'vd_secret_div': avg_valid_loss_secret,
+			})
+			print(f'Valid Loss {loss.detach().item()}, cover_error {loss_cover.detach().item()}, secret_error {loss_secret.detach().item()}')
+			
 
 if __name__ == '__main__':
 
 	train_loader = loader(set = 'train')
-	# test_loader = loader(set = 'test')
+	test_loader = loader(set = 'test')
 
 	# chk = torch.load(f'{MY_FOLDER}/checkpoints/checkpoint_run2_1_901.pt', map_location='cpu')
 	model = StegoUNet()
 	# model.load_state_dict(chk['state_dict'])
 
-	# take one batch from the training loader
-	secrets, covers = next(iter(train_loader))
-	secrets = secrets.unsqueeze(1)
-	covers = covers.unsqueeze(1)
-	# print(secrets.shape, covers.shape)
-
-	# We need to pass a batch of data along with the model
-	# writer.add_graph(model, (secrets.detach(), covers.detach()), verbose = False)
-
 	# train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = chk['epoch'], prev_i = chk['i'])
-	train(model, train_loader, beta = 0.2, lr = 0.001, epochs = 5, prev_epoch = None, prev_i = None)
+	train(
+		model=model, 
+		tr_loader=train_loader, 
+		vd_loader=test_loader, 
+		beta = 0.2, lr = 0.001, epochs = 5, prev_epoch = None, prev_i = None)
