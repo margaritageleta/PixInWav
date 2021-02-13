@@ -1,3 +1,4 @@
+import os
 import re
 import torch
 import random
@@ -11,8 +12,8 @@ from torch.utils.data import DataLoader
 from pystct import sdct
 import matplotlib.pyplot as plt
 
-MY_FOLDER = '/mnt/gpid07/imatge/margarita.geleta/pix2wav'
-DATA_FOLDER = '/projects/deep_learning/ILSVRC/ILSVRC2012'
+MY_FOLDER = os.environ.get('USER_PATH')
+DATA_FOLDER = os.environ.get('IMAGE_PATH')
 AUDIO_FOLDER = f'{MY_FOLDER}/data/FSDnoisy18k.audio_'
 MY_DATA_FOLDER = f'{MY_FOLDER}/data'
 
