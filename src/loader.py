@@ -76,7 +76,7 @@ class StegoDataset(torch.utils.data.Dataset):
         # self._image_data_path = pathlib.Path(image_root) / folder
         self._image_data_path = pathlib.Path(image_root) / 'train'
         self._audio_data_path = pathlib.Path(f'{audio_root}{folder}')
-        self._MAX_LIMIT = 10000
+        self._MAX_LIMIT = 10000 if folder == 'train' else 900
         self._MAX_AUDIO_LIMIT = 17584 if folder == 'train' else 946
 
         print(f'IMAGE DATA LOCATED AT: {self._image_data_path}')
@@ -115,10 +115,11 @@ class StegoDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         key = self._indices[index][0]
         indexer = self._indices[index][1]
-        rand_indexer = random.randint(0, self._MAX_AUDIO_LIMIT)
+        rand_indexer = random.randint(0, self._MAX_AUDIO_LIMIT - 1)
 
         img_path = glob.glob(f'{self._image_data_path}/{key}/{key}_{indexer}.{self.image_extension}')[0]
         # print(f'{rand_indexer} < {self._MAX_AUDIO_LIMIT}')
+        print(len(self._audios), rand_indexer)
         audio_path = self._audios[rand_indexer]
 
         img = np.asarray(ImageProcessor(img_path).forward()).astype('float64')
@@ -149,16 +150,16 @@ def loader(set = 'train'):
 
 if __name__ == '__main__':
 
-    train_loader = loader(set = 'train')
+    #train_loader = loader(set = 'train')
     test_loader = loader(set = 'test')
 
-    for i, batch in enumerate(train_loader):
-        print(f'Batch {i}, shape image {batch[0].shape}, shape audio {batch[1].shape}')
-        if i == 1: break
-
+    #for i, batch in enumerate(train_loader):
+    #    print(f'Batch {i}, shape image {batch[0].shape}, shape audio {batch[1].shape}')
+    #    if i == 1: break
+    print(len(test_loader))
     for i, batch in enumerate(test_loader):
         print(f'Batch {i}, shape image {batch[0].shape}, shape audio {batch[1].shape}')
-        if i == 1: break
+        # if i == 1: break
 
     print(len(train_loader.dataset))
     print(len(test_loader.dataset))
