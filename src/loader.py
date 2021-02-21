@@ -119,7 +119,6 @@ class StegoDataset(torch.utils.data.Dataset):
 
         img_path = glob.glob(f'{self._image_data_path}/{key}/{key}_{indexer}.{self.image_extension}')[0]
         # print(f'{rand_indexer} < {self._MAX_AUDIO_LIMIT}')
-        print(len(self._audios), rand_indexer)
         audio_path = self._audios[rand_indexer]
 
         img = np.asarray(ImageProcessor(img_path).forward()).astype('float64')
