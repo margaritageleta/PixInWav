@@ -1,7 +1,9 @@
 import torch
-from torch import utils
+import numpy as np
 import torch.nn as nn
+from torch import utils
 import torch.nn.functional as F
+from pystct import sdct_torch
 
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels, mid_channels=None):
@@ -163,6 +165,11 @@ class StegoUNet(nn.Module):
         # print(f'Cover {cover.shape}')
         container = cover + hidden_signal
         # print(f'container {container.shape}')
+        # print('Add noise + improve robustness')
+        alpha = torch.empty(1,1).uniform_(0.001,0.3).type(torch.FloatTensor)
+        # print(f'Alpha is: {alpha}')
+        spectral_noise = sdct_torch(alpha * torch.from_numpy(np.random.randn(67522)).type(torch.float32), frame_length=4096, frame_step=62).unsqueeze(0).cuda()
+        container += spectral_noise
         # print('Reveal Network working ...')
         revealed = self.RN(container)
         # print(f'revealed {revealed.shape}')
