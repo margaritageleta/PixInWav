@@ -9,7 +9,7 @@ import glob as glob
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from pystct import sdct
+from pystct import sdct_torch, isdct_torch
 import matplotlib.pyplot as plt
 
 MY_FOLDER = os.environ.get('USER_PATH')
@@ -44,7 +44,7 @@ class AudioProcessor():
     def __init__(self, audio_path):
         self.sound, self.sr = torchaudio.load(audio_path)
         # Corresponds to 1.5 seconds approximately
-        self._limit = 2 ** 16 + 2 ** 11 - 1
+        self._limit = 67522 # 2 ** 16 + 2 ** 11 - 1
         self._frame_length = 2 ** 12
         self._frame_step = 2 ** 6 - 2
 
@@ -59,7 +59,7 @@ class AudioProcessor():
         else:
             i = random.randint(0, len(sound) - self._limit)
             tmp[:] = sound[i:i + self._limit]
-        sound_stct = sdct(tmp.numpy().astype(np.float32),
+        sound_stct = sdct_torch(tmp.type(torch.float32),
                           frame_length = self._frame_length,
                           frame_step = self._frame_step)
         return sound_stct
