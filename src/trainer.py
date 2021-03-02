@@ -156,7 +156,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			snr_audio = SNR(covers.cpu(), containers.cpu())
 			ssim_image = ssim(secrets, revealed)
 			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
-			objective_loss = loss + (10**(np.floor(np.log10(1/33791))) * dtw_loss
+			objective_loss = loss + 10**(np.floor(np.log10(1/33791))) * dtw_loss
 
 			objective_loss.backward()
 			optimizer.step()
