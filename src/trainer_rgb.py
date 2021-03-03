@@ -17,33 +17,33 @@ from pydtw import SoftDTW
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--beta', 
-                        type=float, 
-                        default=0.25, 
-                        metavar='DOUBLE',
-                        help='Beta hyperparameter'
-                    )
+						type=float, 
+						default=0.25, 
+						metavar='DOUBLE',
+						help='Beta hyperparameter'
+					)
 parser.add_argument('--lr', 
-                        type=float, 
-                        default=0.001, 
-                        metavar='DOUBLE',
-                        help='Learning rate hyperparameter'
-                    )
+						type=float, 
+						default=0.001, 
+						metavar='DOUBLE',
+						help='Learning rate hyperparameter'
+					)
 parser.add_argument('--experiment', 
-                        type=int, 
-                        default=0, 
-                        metavar='INT',
-                        help='Number of experiment'
-                    )
+						type=int, 
+						default=0, 
+						metavar='INT',
+						help='Number of experiment'
+					)
 parser.add_argument('--summary', 
-                        type=str, 
-                        default=None, 
-                        metavar='STRING',
-                        help='Summary to be shown in wandb'
-                    )
+						type=str, 
+						default=None, 
+						metavar='STRING',
+						help='Summary to be shown in wandb'
+					)
 
 # assert(True == False)
 
-def save_checkpoint(state, is_best, filename=os.path.join(os.environ.get('USER_PATH'),'outputs/checkpoints/checkpoint.pt')):
+def save_checkpoint(state, is_best, filename=os.path.join(os.environ.get('USER_PATH'),'checkpoints/checkpoint.pt')):
 	 """Save checkpoint if a new best is achieved"""
 	 if is_best:
 		 print ("=> Saving a new best model")
@@ -68,41 +68,45 @@ def compare_images(s, r):
 	return fig
 
 def viz2paper(s, r, cv, ct, log=True):
-    s = s.permute(0,2,3,1).detach().numpy().squeeze(0)
-    r = r.permute(0,2,3,1).detach().numpy().squeeze(0)
-    cv = cv.detach().numpy().squeeze(0).squeeze(0)
-    ct = ct.detach().numpy().squeeze(0).squeeze(0)
-    
+	s = s.permute(0,2,3,1).detach().numpy().squeeze(0)
+	r = r.permute(0,2,3,1).detach().numpy().squeeze(0)
+	cv = cv.detach().numpy().squeeze(0).squeeze(0)
+	ct = ct.detach().numpy().squeeze(0).squeeze(0)
+	
+	print(r)
+	
+	s = (s * 255.0).astype(np.uint8)
+	r = np.clip(r * 255.0, 0, 255).astype(np.uint8)
 
-    fig, ax = plt.subplots(2, 2, figsize=(12, 10))
-    ax[0,0].imshow(s)
-    ax[1,0].imshow(r)
-    ax[0,0].set_title('Secret image')
-    ax[1,0].set_title('Revealed image')
-    ax[0,0].axis('off')
-    ax[1,0].axis('off')
-    
-    if log:
-        img1 = ax[0,1].imshow(np.log(np.abs(cv)[:,] + 1), origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
-        ax[0,1].set_title('Cover STCT log magnitude spectrum')
-        img2 = ax[1,1].imshow(np.log(np.abs(ct)[:,] + 1), origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
-        ax[1,1].set_title('Container STCT log magnitude spectrum')
-    else:
-        img1 = ax[0,1].imshow(np.abs(cv) [:,], origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
-        ax[0,1].set_title('Cover STCT magnitude spectrum')
-        img2 = ax[1,1].imshow(np.abs(ct)[:,], origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
-        ax[1,1].set_title('Container STCT magnitude spectrum')
-    
-    ax[0,1].set_xlabel('Time [n]')
-    ax[0,1].set_ylabel('Frequency')
-    ax[1,1].set_xlabel('Time [n]')
-    ax[1,1].set_ylabel('Frequency')
-    
-    plt.colorbar(img1, ax=ax[0,1])
-    plt.colorbar(img2, ax=ax[1,1])
-    plt.close('all')
-    
-    return fig
+	fig, ax = plt.subplots(2, 2, figsize=(12, 10))
+	ax[0,0].imshow(s)
+	ax[1,0].imshow(r)
+	ax[0,0].set_title('Secret image')
+	ax[1,0].set_title('Revealed image')
+	ax[0,0].axis('off')
+	ax[1,0].axis('off')
+	
+	if log:
+		img1 = ax[0,1].imshow(np.log(np.abs(cv)[:,] + 1), origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
+		ax[0,1].set_title('Cover STCT log magnitude spectrum')
+		img2 = ax[1,1].imshow(np.log(np.abs(ct)[:,] + 1), origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
+		ax[1,1].set_title('Container STCT log magnitude spectrum')
+	else:
+		img1 = ax[0,1].imshow(np.abs(cv) [:,], origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
+		ax[0,1].set_title('Cover STCT magnitude spectrum')
+		img2 = ax[1,1].imshow(np.abs(ct)[:,], origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
+		ax[1,1].set_title('Container STCT magnitude spectrum')
+	
+	ax[0,1].set_xlabel('Time [n]')
+	ax[0,1].set_ylabel('Frequency')
+	ax[1,1].set_xlabel('Time [n]')
+	ax[1,1].set_ylabel('Frequency')
+	
+	plt.colorbar(img1, ax=ax[0,1])
+	plt.colorbar(img2, ax=ax[1,1])
+	plt.close('all')
+	
+	return fig
 
 
 def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0):
@@ -162,7 +166,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			snr_audio = SNR(covers.cpu(), containers.cpu())
 			ssim_image = ssim(secrets, revealed)
 			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
-			objective_loss = loss + 10**(np.floor(np.log10(1/33791))) * dtw_loss
+			objective_loss = loss #+ 10**(np.floor(np.log10(1/33791))) * dtw_loss
 
 			objective_loss.backward()
 			optimizer.step()
@@ -184,13 +188,13 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			avg_dtw_loss = np.mean(train_dtw_loss[-slide:])
 
 			print(
-				f'(#{i})[{np.round(time.time()-ini,2)}s] \
-				Train Loss {loss.detach().item()}, \
-				MSE audio {loss_cover.detach().item()}, \
-				MSE image {loss_secret.detach().item()}, \
-				MSE spectrum {loss_spectrum.detach().item()}, \
-				SNR {snr_audio}, \
-				SSIM {ssim_image.detach().item()}, \
+				f'(#{i})[{np.round(time.time()-ini,2)}s]\
+				Train Loss {loss.detach().item()},\
+				MSE audio {loss_cover.detach().item()},\
+				MSE image {loss_secret.detach().item()},\
+				MSE spectrum {loss_spectrum.detach().item()},\
+				SNR {snr_audio},\
+				SSIM {ssim_image.detach().item()},\
 				DTW {dtw_loss.detach().item()}' 
 			)
 
@@ -218,7 +222,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 					'beta': beta,
 					'lr': lr,
 					'i': i + 1,
-				}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), f'outputs/checkpoints/checkpoint_run_{experiment}.pt'))
+				}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), f'checkpoints/checkpoint_run_{experiment}.pt'))
 		
 		print(
 			f'Epoch [{epoch + 1}/{epochs}], \
@@ -249,10 +253,10 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			'beta': beta,
 			'lr': lr,
 			'i': i + 1,
-		}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), f'outputs/checkpoints/checkpoint_run_{experiment}.pt'))
+		}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), f'checkpoints/checkpoint_run_{experiment}.pt'))
 
 	print(f"Training took {time.time() - ini} seconds")
-	torch.save(model.state_dict(), os.path.join(os.environ.get('USER_PATH'), f'outputs/models/final_run_{experiment}.pt'))
+	torch.save(model.state_dict(), os.path.join(os.environ.get('USER_PATH'), f'checkpoints/final_run_{experiment}.pt'))
 	return model, avg_train_loss
 
 def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, verbose=False):
@@ -282,6 +286,8 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 
 			if i == 0:
 				fig = viz2paper(secrets.cpu(), revealed.cpu(), covers.cpu(), containers.cpu())
+				print(f'Min original: {secrets.min()}, Max original: {secrets.max()}')
+				print(f'Min revealed: {revealed.min()}, Max revealed: {revealed.max()}')
 				wandb.log({f"Revelation at epoch {epoch}, vd iteration {tr_i}": fig})
 
 			container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
@@ -304,17 +310,17 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 			valid_dtw.append(dtw_loss.detach().item())
 
 			print(
-				f'(#{i})[{np.round(time.time()-iniv,2)}s] \
-				Valid Loss {loss.detach().item()}, \
-				cover_error {loss_cover.detach().item()}, \
-				secret_error {loss_secret.detach().item()}, \
-				spectrum_error {loss_spectrum.detach().item()}, \
-				SNR {vd_snr_audio}, \
-				SSIM {ssim_image.detach().item()}, \
+				f'(#{i})[{np.round(time.time()-iniv,2)}s]\
+				Valid Loss {loss.detach().item()},\
+				cover_error {loss_cover.detach().item()},\
+				secret_error {loss_secret.detach().item()},\
+				spectrum_error {loss_spectrum.detach().item()},\
+				SNR {vd_snr_audio},\
+				SSIM {ssim_image.detach().item()},\
 				DTW {dtw_loss.detach().item()}'
 			)
 
-			# if i >= 2: break
+			if i >= 2: break
 			# if i >= vd_datalen: break
 
 		avg_valid_loss = np.mean(valid_loss)

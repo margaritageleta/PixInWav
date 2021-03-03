@@ -77,42 +77,28 @@ class PrepHidingNet(nn.Module):
     def __init__(self):
         super(PrepHidingNet, self).__init__()
 
-        self.au_encoder_layers = nn.ModuleList([
-            Down(1, 64),
-            Down(64, 64 * 2)
-        ])
-
         self.im_encoder_layers = nn.ModuleList([
             Down(1, 64),
             Down(64, 64 * 2)
         ])
 
         self.decoder_layers = nn.ModuleList([
-            Up(64 * 2, 64),
-            Up(64, 1)
+            Up(64 * 2, 64, image_alone=True),
+            Up(64, 1, image_alone=True)
         ])
 
-    def forward(self, im, au):
+    def forward(self, im):
 
-        # print(f'input im {im.shape}')
-        # print(f'input au {au.shape}')
-       
         im_enc = [nn.Upsample(scale_factor=(16, 4), mode='bilinear', align_corners=True)(im).sum(axis=1).unsqueeze(0)]
-        au_enc = [au]
-
-        for enc_layer_idx, enc_layer in enumerate(self.au_encoder_layers):
-            # print(f'au Encoder layer #{enc_layer_idx + 1}')
-            au_enc.append(enc_layer(au_enc[-1]))
 
         for enc_layer_idx, enc_layer in enumerate(self.im_encoder_layers):
             # print(f'im Encoder layer #{enc_layer_idx + 1}')
             im_enc.append(enc_layer(im_enc[-1]))
 
-        mix_dec = [au_enc.pop(-1) + im_enc.pop(-1)]
+        mix_dec = [im_enc.pop(-1)]
 
         for dec_layer_idx, dec_layer in enumerate(self.decoder_layers):
-            # print(f'Decoder layer #{dec_layer_idx + 1}')
-            mix_dec.append(dec_layer(mix_dec[-1], im_enc[-1 - dec_layer_idx], au_enc[-1 - dec_layer_idx]))
+            mix_dec.append(dec_layer(mix_dec[-1], im_enc[-1 - dec_layer_idx]))
         
         return mix_dec[-1]
 
@@ -159,19 +145,21 @@ class StegoUNet(nn.Module):
 
     def forward(self, secret, cover):
         # print('Process + Hiding Network working ...')
-        hidden_signal = self.PHN(secret, cover)
+        hidden_signal = self.PHN(secret)
         # print('Reveal ...')
         # print(f'Hiden signal size {hidden_signal.shape}')
         # print(f'Cover {cover.shape}')
         container = cover + hidden_signal
         # print(f'container {container.shape}')
         # print('Add noise + improve robustness')
-        alpha = torch.empty(1,1).uniform_(0.001,0.3).type(torch.FloatTensor)
+        alpha = torch.empty(1,1).uniform_(0,0.003).type(torch.FloatTensor)
         # print(f'Alpha is: {alpha}')
         spectral_noise = sdct_torch(alpha * torch.from_numpy(np.random.randn(67522)).type(torch.float32), frame_length=4096, frame_step=62).unsqueeze(0).cuda()
         container += spectral_noise
         # print('Reveal Network working ...')
         revealed = self.RN(container)
+        # revealed = torch.clamp(revealed, min=0, max=1)
+        # revealed = F.sigmoid(revealed)
         # print(f'revealed {revealed.shape}')
         # print('DONE! ...')
         
