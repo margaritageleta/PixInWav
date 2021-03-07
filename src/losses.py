@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from pystct import isdct
 import torch.nn.functional as F
+import torch.nn as nn
 from torch.autograd import Variable
 from math import exp
 
@@ -85,11 +86,13 @@ def ssim(img1, img2, window_size = 11, size_average = True):
 def StegoLoss(secret, cover, container, container_2x, revealed, beta):
 
 	loss_cover = F.mse_loss(cover, container)
-	loss_secret = F.mse_loss(secret, revealed)
+	#loss_secret = F.mse_loss(secret, revealed)
+	#loss_secret = nn.L1Loss()
+	loss_secret = nn.SmoothL1Loss()
 	loss_spectrum = F.mse_loss(container, container_2x)
 	#gamma = (1/10) * SNR(cover.cpu(), container.cpu())
 	#loss_cover = gamma * F.mse_loss(cover, container)
 	#loss_secret = gamma * (1 - ssim(secret, revealed)) * F.mse_loss(secret, revealed)
 	# loss = (1 - beta) * (loss_cover + loss_spectrum) + beta * loss_secret
-	loss = (1 - beta) * (loss_cover) + beta * loss_secret
-	return loss, loss_cover, loss_secret, loss_spectrum
+	loss = (1 - beta) * (loss_cover) + beta * loss_secret(secret, revealed)
+	return loss, loss_cover, loss_secret(secret, revealed), loss_spectrum
