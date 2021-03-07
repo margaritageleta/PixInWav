@@ -87,8 +87,8 @@ def StegoLoss(secret, cover, container, container_2x, revealed, beta):
 
 	loss_cover = F.mse_loss(cover, container)
 	#loss_secret = F.mse_loss(secret, revealed)
-	#loss_secret = nn.L1Loss()
-	loss_secret = nn.SmoothL1Loss()
+	loss_secret = nn.L1Loss()
+	#loss_secret = nn.SmoothL1Loss()
 	loss_spectrum = F.mse_loss(container, container_2x)
 	#gamma = (1/10) * SNR(cover.cpu(), container.cpu())
 	#loss_cover = gamma * F.mse_loss(cover, container)
