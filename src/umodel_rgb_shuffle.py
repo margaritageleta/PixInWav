@@ -170,11 +170,12 @@ class StegoUNet(nn.Module):
         # Residual connection
         container = cover + hidden_signal
         # Generate spectral noise
-        alpha = torch.empty(1,1).uniform_(0,0.45).type(torch.FloatTensor)
-        spectral_noise = sdct_torch(alpha * torch.from_numpy(np.random.randn(67522)).type(torch.float32), frame_length=4096, frame_step=62).unsqueeze(0).cuda()
+        # alpha = torch.empty(1,1).uniform_(0,0.45).type(torch.FloatTensor)
+        # spectral_noise = sdct_torch(alpha * torch.from_numpy(np.random.randn(67522)).type(torch.float32), frame_length=4096, frame_step=62).unsqueeze(0).cuda()
         # Add noise in frequency
-        corrupted_container = container + spectral_noise
+        # corrupted_container = container + spectral_noise
         # Reveal image
-        revealed = self.RN(corrupted_container)
-        
+        # revealed = self.RN(corrupted_container)
+        revealed = self.RN(container)
+
         return container, revealed
