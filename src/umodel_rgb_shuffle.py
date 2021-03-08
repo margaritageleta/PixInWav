@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn as nn
 from torch import utils
 import torch.nn.functional as F
-from pystct import sdct_torch
+from pystct import sdct_torch, isdct_torch
 from noises import add_noise
 
 def pixel_unshuffle(input, downscale_factor):
@@ -160,7 +160,7 @@ class RevealNet(nn.Module):
 class StegoUNet(nn.Module):
     def __init__(self, add_noise=False, noise_kind=None, noise_amplitude=None):
         super().__init__()
-        
+
         # Sub-networks
         self.PHN = PrepHidingNet()
         self.RN = RevealNet()
@@ -181,7 +181,8 @@ class StegoUNet(nn.Module):
         if self.add_noise and self.noise_kind is not None and self.noise_amplitude is not None:
             # Generate spectral noise
             container_wav =  isdct_torch(container.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window).cpu()
-            spectral_noise = sdct_torch(add_noise(container_wav, self.noise_kind, self.noise_amplitude).type(torch.float32), frame_length=4096, frame_step=62).unsqueeze(0).cuda()
+            noise = add_noise(container_wav, self.noise_kind, self.noise_amplitude).type(torch.float32)
+            spectral_noise = sdct_torch(noise, frame_length=4096, frame_step=62).unsqueeze(0).cuda()
             # Add noise in frequency
             corrupted_container = container + spectral_noise
             # Reveal image

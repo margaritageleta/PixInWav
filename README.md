@@ -45,18 +45,18 @@ We use [ImageNet](http://image-net.org) (ILSVRC2012) 10,000 images for training 
 ## Usage
 After the installation of the requirements, to execute the `trainer_rgb.py` script, do:
 ```
-srun -u --gres=gpu:2,gpumem:12G 
+$ (env) srun -u --gres=gpu:2,gpumem:12G 
         -p gpi.compute 
         --time 23:59:59 
         --mem 50G python3 trainer_rgb.py 
         --beta [beta_value] 
         --lr [learning_rate_value] 
         --summary "[description_of_the_run]" 
-        --experiment [number]
+        --experiment [experiment_number]
 ```
 Reserve as minimum 12G of GPU memory per GPU, otherwise you may be CUDA OOM. Or, run the `sbatch` script as follows:
 ```
-./train.sh [experiment_number]
+$ (env) ./train.sh [experiment_number]
 ```
 Defining all the arguments and hyperparameters in the script beforehand.
 
@@ -64,7 +64,7 @@ By default, `wandb` checkpoints are created when you execute the `trainer_rgb.py
 
 If you prefer using `tensorboard` checkpoints, you will need to install `tensorboardX` and add the needed lines of code to save the values. Once it is done, just run in another shell window:
 ```
-tensorboard dev upload --logdir 'logs/[timestamp]'
+$ (env) tensorboard dev upload --logdir 'logs/[timestamp]'
 ```
 Where `logs` is the directory you choose to store your logs.
 

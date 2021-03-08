@@ -15,8 +15,8 @@ python3 ../src/trainer_rgb.py --beta $2 \
 --lr $3 \
 --summary "Run $1: Salt&Pepper (0.1), beta=$2, lr=$3" \
 --experiment $1 \
---add_noise True
---noise_kind "salt"
+--add_noise True \
+--noise_kind "salt&pepper" \
 --noise_amplitude 0.1
 echo "Success!"
 EOT

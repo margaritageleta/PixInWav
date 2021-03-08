@@ -127,7 +127,7 @@ def viz2paper(s, r, cv, ct, log=True):
 
 def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0):
 
-	wandb.init(project='PixInWav')
+	wandb.init(project='PixInWavRGB')
 	if summary is not None:
 		wandb.run.name = summary
 		wandb.run.save()
@@ -183,8 +183,8 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			ssim_image = ssim(secrets, revealed)
 			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
 			objective_loss = loss + 10**(np.floor(np.log10(1/33791)) + 1) * dtw_loss
-
-			objective_loss.backward()
+			with torch.autograd.set_detect_anomaly(True):
+				objective_loss.backward()
 			optimizer.step()
 
 			train_loss.append(loss.detach().item())

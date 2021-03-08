@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+torch.autograd.set_detect_anomaly(True)
 
 def gaussian_noise(audio, mean=0.0, std=1.0):
     """
@@ -15,8 +16,11 @@ def salt_noise(audio, prob=0.005):
     """
     ymax, ymin = audio.max(), audio.min()
     random = torch.from_numpy(np.random.uniform(size=audio.size()[0]))
-    audio[(random < prob)] = ymax
-    return audio 
+    tmp = audio.detach().numpy()
+    tmp = np.asarray([ymax if b else tmp[i] for i,b in enumerate(random < prob)], dtype=np.float32)
+    # tmp[(random < prob)] = ymax
+    audio = torch.from_numpy(tmp) 
+    return audio
 
 def pepper_noise(audio, prob=0.005):
     """
@@ -25,7 +29,9 @@ def pepper_noise(audio, prob=0.005):
     """
     ymax, ymin = audio.max(), audio.min()
     random = torch.from_numpy(np.random.uniform(size=audio.size()[0]))
-    audio[(random > 1 - prob)] = ymin
+    tmp = audio.detach().numpy()
+    tmp = np.asarray([ymin if b else tmp[i] for i,b in enumerate(random > 1 - prob)], dtype=np.float32)
+    audio = torch.from_numpy(tmp) 
     return audio
 
 def salt_and_pepper_noise(audio, prob=0.005):
@@ -35,8 +41,9 @@ def salt_and_pepper_noise(audio, prob=0.005):
     """
     ymax, ymin = audio.max(), audio.min()
     random = torch.from_numpy(np.random.uniform(size=audio.size()[0]))
-    audio[(random < prob)] = ymax
-    audio[(random > 1 - prob)] = ymin
+    tmp = np.asarray([ymax if b else tmp[i] for i,b in enumerate(random < prob)], dtype=np.float32)
+    tmp = np.asarray([ymin if b else tmp[i] for i,b in enumerate(random > 1 - prob)], dtype=np.float32)
+    audio = torch.from_numpy(tmp) 
     return audio
 
 def add_noise(audio, noise_kind, noise_amplitude=0.01):
