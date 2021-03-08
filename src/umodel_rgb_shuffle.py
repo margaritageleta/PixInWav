@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch import utils
 import torch.nn.functional as F
 from pystct import sdct_torch
+from noises import add_noise
 
 def pixel_unshuffle(input, downscale_factor):
     '''
@@ -25,13 +26,13 @@ class PixelUnshuffle(nn.Module):
     def __init__(self, downscale_factor):
         super(PixelUnshuffle, self).__init__()
         self.downscale_factor = downscale_factor
+
     def forward(self, input):
         '''
         input: batchSize * c * k*w * k*h
         kdownscale_factor: k
         batchSize * c * k*w * k*h -> batchSize * k*k*c * w * h
         '''
-
         return pixel_unshuffle(input, self.downscale_factor)
 
 class DoubleConv(nn.Module):
@@ -157,10 +158,17 @@ class RevealNet(nn.Module):
 
 
 class StegoUNet(nn.Module):
-    def __init__(self):
+    def __init__(self, add_noise=False, noise_kind=None, noise_amplitude=None):
         super().__init__()
+        
+        # Sub-networks
         self.PHN = PrepHidingNet()
         self.RN = RevealNet()
+
+        # Noise parameters
+        self.add_noise = add_noise
+        self.noise_kind = noise_kind
+        self.noise_amplitude = noise_amplitude
 
     def forward(self, secret, cover):
         # Create a new channel with 0 (R,G,B) -> (R,G,B,0)
@@ -169,13 +177,15 @@ class StegoUNet(nn.Module):
         hidden_signal = self.PHN(secret)
         # Residual connection
         container = cover + hidden_signal
-        # Generate spectral noise
-        # alpha = torch.empty(1,1).uniform_(0,0.45).type(torch.FloatTensor)
-        # spectral_noise = sdct_torch(alpha * torch.from_numpy(np.random.randn(67522)).type(torch.float32), frame_length=4096, frame_step=62).unsqueeze(0).cuda()
-        # Add noise in frequency
-        # corrupted_container = container + spectral_noise
-        # Reveal image
-        # revealed = self.RN(corrupted_container)
-        revealed = self.RN(container)
+
+        if self.add_noise and self.noise_kind is not None and self.noise_amplitude is not None:
+            # Generate spectral noise
+            container_wav =  isdct_torch(container.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window).cpu()
+            spectral_noise = sdct_torch(add_noise(container_wav, self.noise_kind, self.noise_amplitude).type(torch.float32), frame_length=4096, frame_step=62).unsqueeze(0).cuda()
+            # Add noise in frequency
+            corrupted_container = container + spectral_noise
+            # Reveal image
+            revealed = self.RN(corrupted_container)
+        else: revealed = self.RN(container)
 
         return container, revealed

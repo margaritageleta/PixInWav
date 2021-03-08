@@ -40,10 +40,28 @@ parser.add_argument('--summary',
 						metavar='STRING',
 						help='Summary to be shown in wandb'
 					)
+parser.add_argument('--add_noise', 
+						type=bool, 
+						default=None, 
+						metavar='BOOL',
+						help='Boolean to add noise'
+					)
+parser.add_argument('--noise_kind', 
+						type=str, 
+						default=None, 
+						metavar='STRING',
+						help='Noise kind (gaussian, speckle, salt, pepper, salt&pepper)'
+					)
+parser.add_argument('--noise_amplitude', 
+						type=float, 
+						default=None, 
+						metavar='FLOAT',
+						help='Noise amplitude'
+					)
 
 # assert(True == False)
 
-def save_checkpoint(state, is_best, filename=os.path.join(os.environ.get('USER_PATH'),'checkpoints/checkpoint.pt')):
+def save_checkpoint(state, is_best, filename=os.path.join(os.environ.get('OUT_PATH'),'models/checkpoint.pt')):
 	 """Save checkpoint if a new best is achieved"""
 	 if is_best:
 		 print ("=> Saving a new best model")
@@ -220,7 +238,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 					'beta': beta,
 					'lr': lr,
 					'i': i + 1,
-				}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), f'checkpoints/checkpoint_run_{experiment}.pt'))
+				}, is_best=is_best, filename=os.path.join(os.environ.get('OUT_PATH'), f'models/checkpoint_run_{experiment}.pt'))
 		
 		print(
 			f'Epoch [{epoch + 1}/{epochs}], \
@@ -251,10 +269,10 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			'beta': beta,
 			'lr': lr,
 			'i': i + 1,
-		}, is_best=is_best, filename=os.path.join(os.environ.get('USER_PATH'), f'checkpoints/checkpoint_run_{experiment}.pt'))
+		}, is_best=is_best, filename=os.path.join(os.environ.get('OUT_PATH'), f'models/checkpoint_run_{experiment}.pt'))
 
 	print(f"Training took {time.time() - ini} seconds")
-	torch.save(model.state_dict(), os.path.join(os.environ.get('USER_PATH'), f'checkpoints/final_run_{experiment}.pt'))
+	torch.save(model.state_dict(), os.path.join(os.environ.get('OUT_PATH'), f'models/final_run_{experiment}.pt'))
 	return model, avg_train_loss
 
 def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, verbose=False):
@@ -284,8 +302,6 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 
 			if i == 0:
 				fig = viz2paper(secrets.cpu(), revealed.cpu(), covers.cpu(), containers.cpu())
-				print(f'Min original: {secrets.min()}, Max original: {secrets.max()}')
-				print(f'Min revealed: {revealed.min()}, Max revealed: {revealed.max()}')
 				wandb.log({f"Revelation at epoch {epoch}, vd iteration {tr_i}": fig})
 
 			container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
@@ -318,7 +334,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 				DTW {dtw_loss.detach().item()}'
 			)
 
-			if i >= 2: break
+			# if i >= 2: break
 			# if i >= vd_datalen: break
 
 		avg_valid_loss = np.mean(valid_loss)
@@ -358,7 +374,11 @@ if __name__ == '__main__':
 	test_loader = loader(set = 'test')
 
 	# chk = torch.load(f'{MY_FOLDER}/checkpoints/checkpoint_run2_1_901.pt', map_location='cpu')
-	model = StegoUNet()
+	model = StegoUNet(
+		add_noise=args.add_noise, 
+		noise_kind=args.noise_kind, 
+		noise_amplitude=args.noise_amplitude
+	)
 	# model.load_state_dict(chk['state_dict'])
 
 	#train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = chk['epoch'], prev_i = chk['i'])
@@ -367,14 +387,14 @@ if __name__ == '__main__':
 		model=model, 
 		tr_loader=train_loader, 
 		vd_loader=test_loader, 
-		beta=float(args.beta), 
-		lr=float(args.lr), 
-		epochs=20, 
+		beta=args.beta, 
+		lr=args.lr, 
+		epochs=8, 
 		slide=15,
 		prev_epoch=None,  
 		prev_i=None,
 		summary=args.summary,
-		experiment=int(args.experiment)
+		experiment=args.experiment
 	)
 
 

@@ -8,12 +8,12 @@ from math import exp
 
 def SNR(cover, container):
 	cover_wav = isdct(cover.squeeze(0).squeeze(0).detach().numpy(), frame_step=62)
-	container_wav = isdct(container.squeeze(0).squeeze(0).detach().numpy(), frame_step=62)
+	noise_wav = isdct((container - cover).squeeze(0).squeeze(0).detach().numpy(), frame_step=62)
 	
 	signal = np.sum(np.abs(np.fft.fft(cover_wav)) ** 2) / len(np.fft.fft(cover_wav))
-	noise = np.sum(np.abs(np.fft.fft(container_wav))**2) / len(np.fft.fft(container_wav))
-	if noise <= 0.00001 or signal <= 0.00001: return 1
-	return -1*(10 * np.log10(signal / noise))
+	noise = np.sum(np.abs(np.fft.fft(noise_wav))**2) / len(np.fft.fft(noise_wav))
+	if noise <= 0.00001 or signal <= 0.00001: return 0
+	return 10 * np.log10(signal / noise)
 
 def gaussian(window_size, sigma):
 	gauss = torch.Tensor([exp(-(x - window_size//2)**2/float(2*sigma**2)) for x in range(window_size)])
@@ -84,9 +84,9 @@ def ssim(img1, img2, window_size = 11, size_average = True):
 	return _ssim(img1, img2, window, window_size, channel, size_average)
 
 def StegoLoss(secret, cover, container, container_2x, revealed, beta):
-
-	loss_cover = F.mse_loss(cover, container)
-	loss_secret = nn.L1Loss()
-	loss_spectrum = F.mse_loss(container, container_2x)
-	loss = (1 - beta) * (loss_cover) + beta * loss_secret(secret, revealed)
-	return loss, loss_cover, loss_secret(secret, revealed), loss_spectrum
+	loss_L1 = nn.L1Loss()
+	loss_cover = loss_L1(cover, container)
+	loss_secret = loss_L1(secret, revealed)
+	loss_spectrum = loss_L1(container, container_2x)
+	loss = (1 - beta) * loss_cover + beta * loss_secret
+	return loss, loss_cover, loss_secret, loss_spectrum
