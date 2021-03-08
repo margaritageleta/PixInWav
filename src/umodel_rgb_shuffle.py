@@ -5,6 +5,35 @@ from torch import utils
 import torch.nn.functional as F
 from pystct import sdct_torch
 
+def pixel_unshuffle(input, downscale_factor):
+    '''
+    input: batchSize * c * k*w * k*h
+    kdownscale_factor: k
+    batchSize * c * k*w * k*h -> batchSize * k*k*c * w * h
+    '''
+    c = input.shape[1]
+
+    kernel = torch.zeros(size=[downscale_factor * downscale_factor * c,
+                               1, downscale_factor, downscale_factor],
+                         device=input.device)
+    for y in range(downscale_factor):
+        for x in range(downscale_factor):
+            kernel[x + y * downscale_factor::downscale_factor*downscale_factor, 0, y, x] = 1
+    return F.conv2d(input, kernel, stride=downscale_factor, groups=c)
+
+class PixelUnshuffle(nn.Module):
+    def __init__(self, downscale_factor):
+        super(PixelUnshuffle, self).__init__()
+        self.downscale_factor = downscale_factor
+    def forward(self, input):
+        '''
+        input: batchSize * c * k*w * k*h
+        kdownscale_factor: k
+        batchSize * c * k*w * k*h -> batchSize * k*k*c * w * h
+        '''
+
+        return pixel_unshuffle(input, self.downscale_factor)
+
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels, mid_channels=None):
         super().__init__()
@@ -22,13 +51,9 @@ class DoubleConv(nn.Module):
         )
 
     def forward(self, x):
-        # print(8*'='+'DOUBLE CONV')
-        # print(8*'-'+f'Starting shape ({x.shape[1]}x{x.shape[2]}x{x.shape[3]})')
         x = self.conv1(x)
         x = self.conv2(x)
-        # print(8*'-'+f'Final shape ({x.shape[1]}x{x.shape[2]}x{x.shape[3]})')
         return x
-
 
 class Down(nn.Module):
 
@@ -41,11 +66,8 @@ class Down(nn.Module):
         self.down = nn.MaxPool2d(downsample_factor)
 
     def forward(self, x):
-        # print(5*'='+'DOWN')
-        # print(5*'-'+f'Original shape ({x.shape[1]}x{x.shape[2]}x{x.shape[3]})')
         x = self.conv(x)
         x = self.down(x)
-        # print(5*'-'+f'Downsampled shape ({x.shape[1]}x{x.shape[2]}x{x.shape[3]})')
         return x
 
 class Up(nn.Module):
@@ -64,12 +86,8 @@ class Up(nn.Module):
         self.conv = DoubleConv(out_channels * 2 if self.image_alone else out_channels * 3, out_channels, mid_channels)
 
     def forward(self, mix, im_opposite, au_opposite = None):
-        # print(5*'='+'UP')
-        # print(5*'-'+f'Original shape ({mix.shape[1]}x{mix.shape[2]}x{mix.shape[3]})')
         mix = self.up(mix)
-        # print(5*'-'+f'Upsampled shape ({mix.shape[1]}x{mix.shape[2]}x{mix.shape[3]})')
         x = torch.cat((mix, im_opposite), dim=1) if self.image_alone else torch.cat((au_opposite, mix, im_opposite), dim=1)
-        # print(5*'-'+f'Concat shape ({x.shape[1]}x{x.shape[2]}x{x.shape[3]})')
         return self.conv(x)
 
 class PrepHidingNet(nn.Module):
@@ -90,12 +108,11 @@ class PrepHidingNet(nn.Module):
 
     def forward(self, im):
 
-        # PixelShuffle
+        # Pixel Shuffle
         im = self.pixel_shuffle(im)
         im_enc = [nn.Upsample(scale_factor=(8, 2), mode='bilinear', align_corners=True)(im)]
 
         for enc_layer_idx, enc_layer in enumerate(self.im_encoder_layers):
-            # print(f'im Encoder layer #{enc_layer_idx + 1}')
             im_enc.append(enc_layer(im_enc[-1]))
 
         mix_dec = [im_enc.pop(-1)]
@@ -110,34 +127,33 @@ class RevealNet(nn.Module):
     def __init__(self):
         super(RevealNet, self).__init__()
 
+        self.pixel_unshuffle = PixelUnshuffle(2)
+
         self.im_encoder_layers = nn.ModuleList([
-            Down(3, 64),
+            Down(1, 64),
             Down(64, 64 * 2)
         ])
 
         self.decoder_layers = nn.ModuleList([
             Up(64 * 2, 64, image_alone=True),
-            Up(64, 3, image_alone=True)
+            Up(64, 1, image_alone=True)
         ])
 
     def forward(self, ct):
-        # print(f'Reveal im {ct.shape}')
-        im_enc = [F.interpolate(ct, size=(256, 256)).repeat(1,3,1,1)]
-        # print(f'Reveal im_enc {im_enc[0].shape}')
+        im_enc = [F.interpolate(ct, size=(256 * 2, 256 * 2))]
 
         for enc_layer_idx, enc_layer in enumerate(self.im_encoder_layers):
-            # print(f'im Encoder layer #{enc_layer_idx + 1}')
             im_enc.append(enc_layer(im_enc[-1]))
         
-        # print(f'im_enc {im_enc[0].shape}')
         im_dec = [im_enc.pop(-1)]
-        # print(f'im_dec {im_dec[0].shape}')
 
         for dec_layer_idx, dec_layer in enumerate(self.decoder_layers):
-            # print(f'Decoder layer #{dec_layer_idx + 1}')
             im_dec.append(dec_layer(im_dec[-1], im_enc[-1 - dec_layer_idx]))
+        
+        # Pixel Unshuffle and delete 4th component
+        revealed = torch.narrow(self.pixel_unshuffle(im_dec[-1]), 1, 0, 3)
 
-        return im_dec[-1]
+        return revealed
 
 
 class StegoUNet(nn.Module):
@@ -150,24 +166,15 @@ class StegoUNet(nn.Module):
         # Create a new channel with 0 (R,G,B) -> (R,G,B,0)
         zero = torch.zeros(1,1,256,256).type(torch.float32).cuda()
         secret = torch.cat((secret,zero),1)
-
-        # print('Process + Hiding Network working ...')
         hidden_signal = self.PHN(secret)
-        # print('Reveal ...')
-        # print(f'Hiden signal size {hidden_signal.shape}')
-        # print(f'Cover {cover.shape}')
+        # Residual connection
         container = cover + hidden_signal
-        # print(f'container {container.shape}')
-        # print('Add noise + improve robustness')
-        alpha = torch.empty(1,1).uniform_(0,0.003).type(torch.FloatTensor)
-        # print(f'Alpha is: {alpha}')
+        # Generate spectral noise
+        alpha = torch.empty(1,1).uniform_(0,0.45).type(torch.FloatTensor)
         spectral_noise = sdct_torch(alpha * torch.from_numpy(np.random.randn(67522)).type(torch.float32), frame_length=4096, frame_step=62).unsqueeze(0).cuda()
-        container += spectral_noise
-        # print('Reveal Network working ...')
-        revealed = self.RN(container)
-        # revealed = torch.clamp(revealed, min=0, max=1)
-        # revealed = F.sigmoid(revealed)
-        # print(f'revealed {revealed.shape}')
-        # print('DONE! ...')
+        # Add noise in frequency
+        corrupted_container = container + spectral_noise
+        # Reveal image
+        revealed = self.RN(corrupted_container)
         
         return container, revealed

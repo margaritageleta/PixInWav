@@ -8,7 +8,7 @@ import numpy as np
 import torch.nn as nn
 from loader_rgb import loader
 import torch.optim as optim
-from umodel_rgb import StegoUNet
+from umodel_rgb_shuffle import StegoUNet
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from pystct import sdct_torch, isdct_torch
@@ -72,8 +72,6 @@ def viz2paper(s, r, cv, ct, log=True):
 	r = r.permute(0,2,3,1).detach().numpy().squeeze(0)
 	cv = cv.detach().numpy().squeeze(0).squeeze(0)
 	ct = ct.detach().numpy().squeeze(0).squeeze(0)
-	
-	print(r)
 	
 	s = (s * 255.0).astype(np.uint8)
 	r = np.clip(r * 255.0, 0, 255).astype(np.uint8)
@@ -166,7 +164,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			snr_audio = SNR(covers.cpu(), containers.cpu())
 			ssim_image = ssim(secrets, revealed)
 			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
-			objective_loss = loss #+ 10**(np.floor(np.log10(1/33791))) * dtw_loss
+			objective_loss = loss + 10**(np.floor(np.log10(1/33791)) + 1) * dtw_loss
 
 			objective_loss.backward()
 			optimizer.step()
