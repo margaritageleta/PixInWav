@@ -41,6 +41,7 @@ def salt_and_pepper_noise(audio, prob=0.005):
     """
     ymax, ymin = audio.max(), audio.min()
     random = torch.from_numpy(np.random.uniform(size=audio.size()[0]))
+    tmp = audio.detach().numpy()
     tmp = np.asarray([ymax if b else tmp[i] for i,b in enumerate(random < prob)], dtype=np.float32)
     tmp = np.asarray([ymin if b else tmp[i] for i,b in enumerate(random > 1 - prob)], dtype=np.float32)
     audio = torch.from_numpy(tmp) 
