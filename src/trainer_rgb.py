@@ -42,7 +42,7 @@ parser.add_argument('--summary',
 					)
 parser.add_argument('--add_noise', 
 						type=bool, 
-						default=None, 
+						default=False, 
 						metavar='BOOL',
 						help='Boolean to add noise'
 					)
@@ -57,6 +57,12 @@ parser.add_argument('--noise_amplitude',
 						default=None, 
 						metavar='FLOAT',
 						help='Noise amplitude'
+					)
+parser.add_argument('--add_dtw_term', 
+						type=bool, 
+						default=False, 
+						metavar='BOOL',
+						help='Add DTW term in the loss function'
 					)
 
 # assert(True == False)
@@ -125,7 +131,7 @@ def viz2paper(s, r, cv, ct, log=True):
 	return fig
 
 
-def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0):
+def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0, add_dtw_term=False):
 
 	wandb.init(project='PixInWavRGB')
 	if summary is not None:
@@ -182,7 +188,8 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			snr_audio = SNR(covers.cpu(), containers.cpu())
 			ssim_image = ssim(secrets, revealed)
 			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
-			objective_loss = loss + 10**(np.floor(np.log10(1/33791)) + 1) * dtw_loss
+			objective_loss = loss 
+			if add_dtw_term: objective_loss += 10**(np.floor(np.log10(1/33791)) + 1) * dtw_loss
 			with torch.autograd.set_detect_anomaly(True):
 				objective_loss.backward()
 			optimizer.step()
@@ -334,7 +341,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 				DTW {dtw_loss.detach().item()}'
 			)
 
-			# if i >= 2: break
+			if i >= 500: break
 			# if i >= vd_datalen: break
 
 		avg_valid_loss = np.mean(valid_loss)
@@ -394,7 +401,8 @@ if __name__ == '__main__':
 		prev_epoch=None,  
 		prev_i=None,
 		summary=args.summary,
-		experiment=args.experiment
+		experiment=args.experiment,
+		add_dtw_term=args.add_dtw_term
 	)
 
 
