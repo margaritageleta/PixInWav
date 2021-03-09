@@ -84,9 +84,8 @@ def ssim(img1, img2, window_size = 11, size_average = True):
 	return _ssim(img1, img2, window, window_size, channel, size_average)
 
 def StegoLoss(secret, cover, container, container_2x, revealed, beta):
-	loss_L1 = nn.L1Loss()
-	loss_cover = loss_L1(cover, container)
-	loss_secret = loss_L1(secret, revealed)
-	loss_spectrum = loss_L1(container, container_2x)
-	loss = (1 - beta) * loss_cover + beta * loss_secret
-	return loss, loss_cover, loss_secret, loss_spectrum
+	loss_cover = F.mse_loss(cover, container)
+	loss_secret = nn.L1Loss()
+	loss_spectrum = F.mse_loss(container, container_2x)
+	loss = (1 - beta) * (loss_cover) + beta * loss_secret(secret, revealed)
+	return loss, loss_cover, loss_secret(secret, revealed), loss_spectrum
