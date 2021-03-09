@@ -287,6 +287,10 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	print(f'Using device: {device}')
 
+	if torch.cuda.device_count() > 1:
+  		print("Let's use", torch.cuda.device_count(), "GPUs!")
+  		model = nn.DataParallel(model)
+
 	model.to(device)
 
 	# Set to evaluation mode
