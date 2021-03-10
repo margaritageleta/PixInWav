@@ -7,6 +7,16 @@ from torch.autograd import Variable
 from math import exp
 
 def SNR(cover, container):
+	"""
+    Computes SNR (Signal-to-Noise-Ratio)
+	metric between cover and container signals.
+	First, it computes ISTCT over the spectrograms.
+
+	" A local SNR of 30dB is effectively a clean signal. 
+	Listeners will barely notice anything better than 20dB, 
+	and intelligibility is still pretty good at 0dB SNR "
+	> http://www1.icsi.berkeley.edu/Speech/faq/speechSNR.html
+    """
 	cover_wav = isdct(cover.squeeze(0).squeeze(0).detach().numpy(), frame_step=62)
 	noise_wav = isdct((container - cover).squeeze(0).squeeze(0).detach().numpy(), frame_step=62)
 	
@@ -16,16 +26,28 @@ def SNR(cover, container):
 	return 10 * np.log10(signal / noise)
 
 def gaussian(window_size, sigma):
+	"""
+	Courtesy of https://github.com/Po-Hsun-Su/pytorch-ssim
+	Function for the computation of Differentiable structural similarity (SSIM) index.
+	"""
 	gauss = torch.Tensor([exp(-(x - window_size//2)**2/float(2*sigma**2)) for x in range(window_size)])
 	return gauss/gauss.sum()
 
 def create_window(window_size, channel):
+	"""
+	Courtesy of https://github.com/Po-Hsun-Su/pytorch-ssim
+	Function for the computation of Differentiable structural similarity (SSIM) index.
+	"""
 	_1D_window = gaussian(window_size, 1.5).unsqueeze(1)
 	_2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
 	window = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
 	return window
 
 def _ssim(img1, img2, window, window_size, channel, size_average = True):
+	"""
+	Courtesy of https://github.com/Po-Hsun-Su/pytorch-ssim
+	Function for the computation of Differentiable structural similarity (SSIM) index.
+	"""
 	mu1 = F.conv2d(img1, window, padding = window_size//2, groups = channel)
 	mu2 = F.conv2d(img2, window, padding = window_size//2, groups = channel)
 
@@ -48,6 +70,10 @@ def _ssim(img1, img2, window, window_size, channel, size_average = True):
 		return ssim_map.mean(1).mean(1).mean(1)
 
 class SSIM(torch.nn.Module):
+	"""
+	Courtesy of https://github.com/Po-Hsun-Su/pytorch-ssim
+	Function for the computation of Differentiable structural similarity (SSIM) index.
+	"""
 	def __init__(self, window_size = 11, size_average = True):
 		super(SSIM, self).__init__()
 		self.window_size = window_size
@@ -74,6 +100,10 @@ class SSIM(torch.nn.Module):
 		return _ssim(img1, img2, window, self.window_size, channel, self.size_average)
 
 def ssim(img1, img2, window_size = 11, size_average = True):
+	"""
+	Courtesy of https://github.com/Po-Hsun-Su/pytorch-ssim
+	Function for the computation of Differentiable structural similarity (SSIM) index.
+	"""
 	(_, channel, _, _) = img1.size()
 	window = create_window(window_size, channel)
 	
@@ -84,6 +114,13 @@ def ssim(img1, img2, window_size = 11, size_average = True):
 	return _ssim(img1, img2, window, window_size, channel, size_average)
 
 def StegoLoss(secret, cover, container, container_2x, revealed, beta):
+	"""
+	Our custom StegoLoss function: a convex combination of two reconstruction 
+	losses (image: [loss_secret], spectrogram: [loss_cover]) where both terms 
+	are leveraged with the hyperparameter [beta].
+
+	The optional DTW term may be added outside this function in the trainer script.
+	"""
 	loss_cover = F.mse_loss(cover, container)
 	loss_secret = nn.L1Loss()
 	loss_spectrum = F.mse_loss(container, container_2x)
