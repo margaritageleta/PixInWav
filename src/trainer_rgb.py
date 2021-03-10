@@ -6,7 +6,7 @@ import wandb
 import argparse
 import numpy as np
 import torch.nn as nn
-from loader_rgb import loader
+from loader import loader
 import torch.optim as optim
 from umodel_rgb_shuffle import StegoUNet
 import torch.nn.functional as F
@@ -14,6 +14,16 @@ import matplotlib.pyplot as plt
 from pystct import sdct_torch, isdct_torch
 from losses import ssim, SNR, StegoLoss
 from pydtw import SoftDTW
+
+def parse_keyword(keyword):
+    if isinstance(keyword, bool):
+       return keyword
+    if keyword.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif keyword.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Wrong keyword.')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--beta', 
@@ -41,7 +51,7 @@ parser.add_argument('--summary',
 						help='Summary to be shown in wandb'
 					)
 parser.add_argument('--add_noise', 
-						type=bool, 
+						type=parse_keyword, 
 						default=False, 
 						metavar='BOOL',
 						help='Boolean to add noise'
@@ -59,10 +69,16 @@ parser.add_argument('--noise_amplitude',
 						help='Noise amplitude'
 					)
 parser.add_argument('--add_dtw_term', 
-						type=bool, 
+						type=parse_keyword, 
 						default=False, 
 						metavar='BOOL',
 						help='Add DTW term in the loss function'
+					)
+parser.add_argument('--rgb', 
+						type=parse_keyword, 
+						default=True, 
+						metavar='BOOL',
+						help='Use RGB images or B&W'
 					)
 
 # assert(True == False)
@@ -380,11 +396,20 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 if __name__ == '__main__':
 
 	args = parser.parse_args()
+	print(args)
 
-	train_loader = loader(set = 'train')
-	test_loader = loader(set = 'test')
+	train_loader = loader(
+		set='train', 
+		rgb=args.rgb
+	)
+	test_loader = loader(
+		set='test',
+		rgb=args.rgb
+	)
 
 	# chk = torch.load(f'{MY_FOLDER}/checkpoints/checkpoint_run2_1_901.pt', map_location='cpu')
+	
+
 	model = StegoUNet(
 		add_noise=args.add_noise, 
 		noise_kind=args.noise_kind, 

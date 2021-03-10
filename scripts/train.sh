@@ -3,7 +3,7 @@ sbatch <<EOT
 #!/bin/sh
 #SBATCH --job-name=$1PixInWav
 #SBATCH -p gpi.compute
-#SBATCH -c 2
+#SBATCH -c 4
 #SBATCH --gres=gpu:2,gpumem:12G
 #SBATCH --mem=32G
 #SBATCH --time=23:59:59
@@ -13,11 +13,12 @@ sbatch <<EOT
 echo "Executing experiment $1"
 python3 ../src/trainer_rgb.py --beta $2 \
 --lr $3 \
---summary "Run $1: Salt (0.1), beta=$2, lr=$3" \
+--summary "Run $1: Original, beta=$2, lr=$3" \
 --experiment $1 \
---add_noise True \
---noise_kind "salt" \
---noise_amplitude 0.1 \
---add_dtw_term False
+--add_noise False \
+--noise_kind None \
+--noise_amplitude 0 \
+--add_dtw_term False \
+--rgb True
 echo "Success!"
 EOT

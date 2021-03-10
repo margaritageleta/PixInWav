@@ -178,7 +178,7 @@ class StegoUNet(nn.Module):
         # Residual connection
         container = cover + hidden_signal
 
-        if self.add_noise and self.noise_kind is not None and self.noise_amplitude is not None:
+        if (self.add_noise) and (self.noise_kind is not None) and (self.noise_amplitude is not None):
             # Generate spectral noise
             container_wav =  isdct_torch(container.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window).cpu()
             noise = add_noise(container_wav, self.noise_kind, self.noise_amplitude).type(torch.float32)
