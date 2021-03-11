@@ -25,6 +25,17 @@ def SNR(cover, container):
 	if noise <= 0.00001 or signal <= 0.00001: return 0
 	return 10 * np.log10(signal / noise)
 
+def PSNR(secret, revealed):
+    """
+    Computes PSNR (Peak Signal to Noise Ratio)
+    metric between secret and revealed signals.
+    """
+    s, r = (secret * 255.0), (revealed * 255.0)
+
+    mse = torch.mean((s - r) ** 2)
+    if mse == 0: mse = torch.Tensor([10e-46])
+    return 20 * torch.log10(255.0 / torch.sqrt(mse))
+
 def gaussian(window_size, sigma):
 	"""
 	Courtesy of https://github.com/Po-Hsun-Su/pytorch-ssim
