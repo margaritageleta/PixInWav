@@ -12,7 +12,7 @@ from umodel_rgb_shuffle import StegoUNet
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from pystct import sdct_torch, isdct_torch
-from losses import ssim, SNR, StegoLoss
+from losses import ssim, SNR, PSNR, StegoLoss
 from pydtw import SoftDTW
 
 def parse_keyword(keyword):
@@ -126,14 +126,14 @@ def viz2paper(s, r, cv, ct, log=True):
 	
 	if log:
 		img1 = ax[0,1].imshow(np.log(np.abs(cv)[:,] + 1), origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
-		ax[0,1].set_title('Cover STCT log magnitude spectrum')
+		ax[0,1].set_title('Cover STDCT log spectrogram')
 		img2 = ax[1,1].imshow(np.log(np.abs(ct)[:,] + 1), origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
-		ax[1,1].set_title('Container STCT log magnitude spectrum')
+		ax[1,1].set_title('Container STDCT log spectrogram')
 	else:
 		img1 = ax[0,1].imshow(np.abs(cv) [:,], origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
-		ax[0,1].set_title('Cover STCT magnitude spectrum')
+		ax[0,1].set_title('Cover STDCT spectrogram')
 		img2 = ax[1,1].imshow(np.abs(ct)[:,], origin = 'upper', aspect = 'auto', cmap=plt.cm.get_cmap("jet"))
-		ax[1,1].set_title('Container STCT magnitude spectrum')
+		ax[1,1].set_title('Container STDCT spectrogram')
 	
 	ax[0,1].set_xlabel('Time [n]')
 	ax[0,1].set_ylabel('Frequency')
@@ -182,8 +182,9 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 		if prev_epoch != None and epoch < prev_epoch - 1: continue
 
-		train_loss, train_loss_cover, train_loss_secret, train_loss_spectrum, snr, ssim_secret, train_dtw_loss = [], [], [], [], [], [], []
-
+		train_loss, train_loss_cover, train_loss_secret, train_loss_spectrum, snr, psnr, ssim_secret, train_dtw_loss = [], [], [], [], [], [], [], []
+		vd_loss, vd_loss_cover, vd_loss_secret, vd_snr, vd_psnr, vd_ssim, vd_dtw = [], [], [], [], [], [], []
+		
 		for i, data in enumerate(tr_loader):
 
 			if prev_i != None and i < prev_i - 1: continue
@@ -202,6 +203,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 			loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 			snr_audio = SNR(covers.cpu(), containers.cpu())
+			psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
 			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
 			objective_loss = loss 
@@ -215,6 +217,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			train_loss_secret.append(loss_secret.detach().item())
 			train_loss_spectrum.append(loss_spectrum.detach().item())
 			snr.append(snr_audio)
+			psnr.append(psnr_image.detach().item())
 			ssim_secret.append(ssim_image.detach().item())
 			train_dtw_loss.append(dtw_loss.detach().item())
 
@@ -224,6 +227,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			avg_train_loss_spectrum = np.mean(train_loss_spectrum[-slide:])
 			avg_snr = np.mean(snr[-slide:])
 			avg_ssim = np.mean(ssim_secret[-slide:])
+			avg_psnr = np.mean(psnr[-slide:])
 			avg_dtw_loss = np.mean(train_dtw_loss[-slide:])
 
 			print(
@@ -233,6 +237,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 				MSE image {loss_secret.detach().item()},\
 				MSE spectrum {loss_spectrum.detach().item()},\
 				SNR {snr_audio},\
+				PSNR {psnr_image.detach().item()},\
 				SSIM {ssim_image.detach().item()},\
 				DTW {dtw_loss.detach().item()}' 
 			)
@@ -244,13 +249,22 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 				'tr_i_secret_loss': avg_train_loss_secret,
 				'tr_i_spectrum_loss': avg_train_loss_spectrum,
 				'SNR': avg_snr,
+				'PSNR': avg_psnr,
 				'SSIM': avg_ssim,
 				'DTW': avg_dtw_loss,
 			})
 
 			# Log images
 			if (i % 50 == 0) and (i != 0):
-				validate(model, vd_loader, beta, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
+				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(model, vd_loader, beta, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
+				
+				vd_loss.append(avg_valid_loss) 
+				vd_loss_cover.append(avg_valid_loss_cover) 
+				vd_loss_secret.append(avg_valid_loss_secret) 
+				vd_snr.append(avg_valid_snr) 
+				vd_psnr.append(avg_valid_psnr)
+				vd_ssim.append(avg_valid_ssim) 
+				vd_dtw.append(avg_valid_dtw)
 
 				is_best = bool(avg_train_loss < best_loss)
 				# Save checkpoint if is a new best
@@ -261,6 +275,20 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 					'beta': beta,
 					'lr': lr,
 					'i': i + 1,
+					'tr_loss': train_loss,
+					'tr_cover_loss': train_loss_cover,
+					'tr_loss_secret': train_loss_secret,
+					'tr_snr': snr,
+					'tr_psnr': psnr,
+					'tr_ssim': ssim_secret,
+					'tr_dtw': train_dtw_loss,
+					'vd_loss': vd_loss,
+					'vd_cover_loss': vd_loss_cover,
+					'vd_loss_secret': vd_loss_secret,
+					'vd_snr': vd_snr,
+					'vd_psnr': vd_psnr,
+					'vd_ssim': vd_ssim,
+					'vd_dtw': vd_dtw,
 				}, is_best=is_best, filename=os.path.join(os.environ.get('OUT_PATH'), f'models/checkpoint_run_{experiment}.pt'))
 		
 		print(
@@ -270,6 +298,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			Average_loss_secret: {avg_train_loss_secret}, \
 			Average_loss_spectrum: {avg_train_loss_spectrum}, \
 			Average SNR: {avg_snr}, \
+			Average PSNR: {avg_psnr},\
 			Average SSIM: {avg_ssim}, \
 			Average DTW: {avg_dtw_loss}'
 		)
@@ -313,7 +342,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 	model.eval()
 	loss = 0
 
-	valid_loss, valid_loss_cover, valid_loss_secret, valid_loss_spectrum, valid_snr, valid_ssim, valid_dtw = [], [], [], [], [], [], []
+	valid_loss, valid_loss_cover, valid_loss_secret, valid_loss_spectrum, valid_snr, valid_psnr, valid_ssim, valid_dtw = [], [], [], [], [], [], [], []
 	vd_datalen = len(vd_loader)
 	
 	iniv = time.time()
@@ -336,6 +365,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 
 			loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 			vd_snr_audio = SNR(covers.cpu(), containers.cpu())
+			vd_psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
 
 			if dtw_criterion is not None:
@@ -347,6 +377,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 			valid_loss_secret.append(loss_secret.detach().item())
 			valid_loss_spectrum.append(loss_spectrum.detach().item())
 			valid_snr.append(vd_snr_audio)
+			valid_psnr.append(vd_psnr_image.detach().item())
 			valid_ssim.append(ssim_image.detach().item())
 			valid_dtw.append(dtw_loss.detach().item())
 
@@ -357,6 +388,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 				secret_error {loss_secret.detach().item()},\
 				spectrum_error {loss_spectrum.detach().item()},\
 				SNR {vd_snr_audio},\
+				PSNR {vd_psnr_image.detach().item()},\
 				SSIM {ssim_image.detach().item()},\
 				DTW {dtw_loss.detach().item()}'
 			)
@@ -369,6 +401,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 		avg_valid_loss_secret = np.mean(valid_loss_secret)
 		avg_valid_loss_spectrum = np.mean(valid_loss_spectrum)
 		avg_valid_snr = np.mean(valid_snr)
+		avg_valid_psnr = np.mean(valid_psnr)
 		avg_valid_ssim = np.mean(valid_ssim)
 		avg_valid_dtw = np.mean(valid_dtw)
 
@@ -378,6 +411,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 			'vd_secret_loss': avg_valid_loss_secret,
 			'vd_spectrum_loss': avg_valid_loss_spectrum,
 			'vd_SNR': avg_valid_snr,
+			'vd_PSNR': avg_valid_psnr,
 			'vd_SSIM': avg_valid_ssim,
 			'vd_DTW': avg_valid_dtw
 		})
@@ -388,9 +422,12 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 	del valid_loss_secret
 	del valid_loss_spectrum
 	del valid_snr
+	del valid_psnr
 	del valid_ssim
 	del valid_dtw
 	gc.collect()
+
+	return avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw
 			
 
 if __name__ == '__main__':
