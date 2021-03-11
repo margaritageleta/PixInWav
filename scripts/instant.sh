@@ -10,5 +10,6 @@ srun -u -c 1 -p gpi.develop --time 02:00:00 --mem 32G --gres=gpu:2,gpumem:12G py
 --noise_kind None \
 --noise_amplitude 0 \
 --add_dtw_term False \
---rgb True
+--rgb True \
+--from_checkpoint False
 echo "Success!"

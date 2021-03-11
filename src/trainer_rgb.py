@@ -80,6 +80,12 @@ parser.add_argument('--rgb',
 						metavar='BOOL',
 						help='Use RGB images or B&W'
 					)
+parser.add_argument('--from_checkpoint', 
+						type=parse_keyword, 
+						default=False, 
+						metavar='BOOL',
+						help='Use checkpoint listed by experiment number'
+					)
 
 # assert(True == False)
 
@@ -393,7 +399,7 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 				DTW {dtw_loss.detach().item()}'
 			)
 
-			if i >= 500: break
+			if i >= 2: break
 			# if i >= vd_datalen: break
 
 		avg_valid_loss = np.mean(valid_loss)
@@ -444,18 +450,19 @@ if __name__ == '__main__':
 		rgb=args.rgb
 	)
 
-	# chk = torch.load(f'{MY_FOLDER}/checkpoints/checkpoint_run2_1_901.pt', map_location='cpu')
-	
-
 	model = StegoUNet(
 		add_noise=args.add_noise, 
 		noise_kind=args.noise_kind, 
 		noise_amplitude=args.noise_amplitude
 	)
-	# model.load_state_dict(chk['state_dict'])
 
-	#train(train_loader, beta = 0.3, lr = 0.001, epochs = 5, prev_epoch = chk['epoch'], prev_i = chk['i'])
-	
+	if args.from_checkpoint:
+		# Load checkpoint
+		checkpoint = torch.load(os.path.join(os.environ.get('OUT_PATH'),f'models/checkpoint_run_{args.experiment}.pt'), map_location='cpu')
+		model = nn.DataParallel(model)
+		model.load_state_dict(checkpoint['state_dict'])
+		print('Checkpoint loaded ++')
+
 	train(
 		model=model, 
 		tr_loader=train_loader, 
@@ -464,8 +471,8 @@ if __name__ == '__main__':
 		lr=args.lr, 
 		epochs=8, 
 		slide=15,
-		prev_epoch=None,  
-		prev_i=None,
+		prev_epoch=checkpoint['epoch'] if args.from_checkpoint else None,  
+		prev_i=checkpoint['i'] if args.from_checkpoint else None,
 		summary=args.summary,
 		experiment=args.experiment,
 		add_dtw_term=args.add_dtw_term

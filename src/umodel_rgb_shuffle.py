@@ -102,7 +102,7 @@ class PrepHidingNet(nn.Module):
             Down(64, 64 * 2)
         ])
 
-        self.decoder_layers = nn.ModuleList([
+        self.im_decoder_layers = nn.ModuleList([
             Up(64 * 2, 64, image_alone=True),
             Up(64, 1, image_alone=True)
         ])
@@ -118,8 +118,11 @@ class PrepHidingNet(nn.Module):
 
         mix_dec = [im_enc.pop(-1)]
 
-        for dec_layer_idx, dec_layer in enumerate(self.decoder_layers):
-            mix_dec.append(dec_layer(mix_dec[-1], im_enc[-1 - dec_layer_idx]))
+        for dec_layer_idx, dec_layer in enumerate(self.im_decoder_layers):
+            mix_dec.append(
+                dec_layer(mix_dec[-1], 
+                im_enc[-1 - dec_layer_idx])
+            )
         
         return mix_dec[-1]
 
@@ -135,7 +138,7 @@ class RevealNet(nn.Module):
             Down(64, 64 * 2)
         ])
 
-        self.decoder_layers = nn.ModuleList([
+        self.im_decoder_layers = nn.ModuleList([
             Up(64 * 2, 64, image_alone=True),
             Up(64, 1, image_alone=True)
         ])
@@ -148,8 +151,11 @@ class RevealNet(nn.Module):
         
         im_dec = [im_enc.pop(-1)]
 
-        for dec_layer_idx, dec_layer in enumerate(self.decoder_layers):
-            im_dec.append(dec_layer(im_dec[-1], im_enc[-1 - dec_layer_idx]))
+        for dec_layer_idx, dec_layer in enumerate(self.im_decoder_layers):
+            im_dec.append(
+                dec_layer(im_dec[-1], 
+                im_enc[-1 - dec_layer_idx])
+            )
         
         # Pixel Unshuffle and delete 4th component
         revealed = torch.narrow(self.pixel_unshuffle(im_dec[-1]), 1, 0, 3)
@@ -158,12 +164,25 @@ class RevealNet(nn.Module):
 
 
 class StegoUNet(nn.Module):
-    def __init__(self, add_noise=False, noise_kind=None, noise_amplitude=None):
+    def __init__(
+        self, 
+        add_noise=False, 
+        noise_kind=None, 
+        noise_amplitude=None, 
+        frame_length=4096, 
+        frame_step=62,
+        switch=False
+    ):
         super().__init__()
 
         # Sub-networks
         self.PHN = PrepHidingNet()
         self.RN = RevealNet()
+
+        # STDCT parameters
+        self.frame_length = frame_length
+        self.frame_step = frame_step
+        self.switch = switch
 
         # Noise parameters
         self.add_noise = add_noise
@@ -172,21 +191,53 @@ class StegoUNet(nn.Module):
 
     def forward(self, secret, cover):
         # Create a new channel with 0 (R,G,B) -> (R,G,B,0)
-        zero = torch.zeros(1,1,256,256).type(torch.float32).cuda()
+        zero = torch.zeros(1, 1, 256, 256).type(torch.float32).cuda()
         secret = torch.cat((secret,zero),1)
         hidden_signal = self.PHN(secret)
         # Residual connection
         container = cover + hidden_signal
 
         if (self.add_noise) and (self.noise_kind is not None) and (self.noise_amplitude is not None):
+            # Switch domain
+            container_wav =  isdct_torch(
+                container.squeeze(0).squeeze(0), 
+                frame_length=self.frame_length, 
+                frame_step=self.frame_step, 
+                window=torch.hamming_window
+            )
             # Generate spectral noise
-            container_wav =  isdct_torch(container.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window).cpu()
-            noise = add_noise(container_wav, self.noise_kind, self.noise_amplitude).type(torch.float32)
-            spectral_noise = sdct_torch(noise, frame_length=4096, frame_step=62).unsqueeze(0).cuda()
+            noise = add_noise(
+                container_wav, 
+                self.noise_kind, 
+                self.noise_amplitude
+            ).type(torch.float32)
+            spectral_noise = sdct_torch(
+                noise, 
+                frame_length=self.frame_length, 
+                frame_step=self.frame_step
+            ).unsqueeze(0).cuda()
+
             # Add noise in frequency
             corrupted_container = container + spectral_noise
+            
             # Reveal image
             revealed = self.RN(corrupted_container)
-        else: revealed = self.RN(container)
+        else: 
+            if self.switch:
+                # Switch domain and back
+                container_wav =  isdct_torch(
+                    container.squeeze(0).squeeze(0), 
+                    frame_length=self.frame_length, 
+                    frame_step=self.frame_step, 
+                    window=torch.hamming_window
+                )
+                container = sdct_torch(
+                    container_wav, 
+                    frame_length=self.frame_length, 
+                    frame_step=self.frame_step
+                ).unsqueeze(0).unsqueeze(0)
+
+            # Reveal image
+            revealed = self.RN(container)
 
         return container, revealed
