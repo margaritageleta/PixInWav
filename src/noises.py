@@ -7,7 +7,7 @@ def gaussian_noise(audio, mean=0.0, std=1.0):
     Generates Gaussian noise of audio length
     with mean and std defined in the params.
     """
-    return mean + torch.from_numpy(np.random.randn(audio.size()[0])) * std
+    return mean + torch.from_numpy(np.random.randn(audio.size()[0])).cuda() * std
 
 def salt_noise(audio, prob=0.005):
     """
@@ -20,7 +20,7 @@ def salt_noise(audio, prob=0.005):
     tmp = np.asarray([ymax if b else tmp[i] for i,b in enumerate(random < prob)], dtype=np.float32)
     # tmp[(random < prob)] = ymax
     audio = torch.from_numpy(tmp) 
-    return audio
+    return audio.cuda()
 
 def pepper_noise(audio, prob=0.005):
     """
@@ -32,7 +32,7 @@ def pepper_noise(audio, prob=0.005):
     tmp = audio.detach().numpy()
     tmp = np.asarray([ymin if b else tmp[i] for i,b in enumerate(random > 1 - prob)], dtype=np.float32)
     audio = torch.from_numpy(tmp) 
-    return audio
+    return audio.cuda()
 
 def salt_and_pepper_noise(audio, prob=0.005):
     """
@@ -45,7 +45,7 @@ def salt_and_pepper_noise(audio, prob=0.005):
     tmp = np.asarray([ymax if b else tmp[i] for i,b in enumerate(random < prob)], dtype=np.float32)
     tmp = np.asarray([ymin if b else tmp[i] for i,b in enumerate(random > 1 - prob)], dtype=np.float32)
     audio = torch.from_numpy(tmp) 
-    return audio
+    return audio.cuda()
 
 def add_noise(audio, noise_kind, noise_amplitude=0.01):
     """

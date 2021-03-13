@@ -208,8 +208,8 @@ class StegoUNet(nn.Module):
             # Generate spectral noise
             noise = add_noise(
                 container_wav, 
-                self.noise_kind, 
-                self.noise_amplitude
+                self.noise_kind[np.random.randint(0, len(self.noise_kind))],
+                self.noise_amplitude[np.random.randint(0, len(self.noise_amplitude))]
             ).type(torch.float32)
             spectral_noise = sdct_torch(
                 noise, 

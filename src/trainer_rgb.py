@@ -58,12 +58,14 @@ parser.add_argument('--add_noise',
 					)
 parser.add_argument('--noise_kind', 
 						type=str, 
+						nargs='+',
 						default=None, 
 						metavar='STRING',
 						help='Noise kind (gaussian, speckle, salt, pepper, salt&pepper)'
 					)
 parser.add_argument('--noise_amplitude', 
 						type=float, 
+						nargs='+',
 						default=None, 
 						metavar='FLOAT',
 						help='Noise amplitude'
