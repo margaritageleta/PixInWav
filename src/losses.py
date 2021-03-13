@@ -6,19 +6,25 @@ import torch.nn as nn
 from torch.autograd import Variable
 from math import exp
 
-def SNR(cover, container):
+def SNR(cover, container, phase, transform, transform_constructor=None):
 	"""
     Computes SNR (Signal-to-Noise-Ratio)
 	metric between cover and container signals.
-	First, it computes ISTCT over the spectrograms.
+	First, it computes i[transform] over the spectrograms.
+	Transform can be either [cosine] or [fourier]
 
 	" A local SNR of 30dB is effectively a clean signal. 
 	Listeners will barely notice anything better than 20dB, 
 	and intelligibility is still pretty good at 0dB SNR "
 	> http://www1.icsi.berkeley.edu/Speech/faq/speechSNR.html
     """
-	cover_wav = isdct(cover.squeeze(0).squeeze(0).detach().numpy(), frame_step=62)
-	noise_wav = isdct((container - cover).squeeze(0).squeeze(0).detach().numpy(), frame_step=62)
+	if transform == 'cosine':
+		cover_wav = isdct(cover.squeeze(0).squeeze(0).cpu().detach().numpy(), frame_step=62)
+		noise_wav = isdct((container - cover).squeeze(0).squeeze(0).cpu().detach().numpy(), frame_step=62)
+	elif (transform == 'fourier') and (transform_constructor is not None):
+		cover_wav = transform_constructor.inverse(cover.squeeze(1), phase.squeeze(1)).cpu().data.numpy()[..., :]
+		noise_wav = transform_constructor.inverse(container.squeeze(1), phase.squeeze(1)).cpu().data.numpy()[..., :]
+	else: raise Exception('Transform not defined')
 	
 	signal = np.sum(np.abs(np.fft.fft(cover_wav)) ** 2) / len(np.fft.fft(cover_wav))
 	noise = np.sum(np.abs(np.fft.fft(noise_wav))**2) / len(np.fft.fft(noise_wav))
