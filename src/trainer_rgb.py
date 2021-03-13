@@ -11,6 +11,7 @@ import torch.optim as optim
 from umodel_rgb_shuffle import StegoUNet
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+from torch_stft import STFT
 from pystct import sdct_torch, isdct_torch
 from losses import ssim, SNR, PSNR, StegoLoss
 from pydtw import SoftDTW
@@ -61,7 +62,7 @@ parser.add_argument('--noise_kind',
 						nargs='+',
 						default=None, 
 						metavar='STRING',
-						help='Noise kind (gaussian, speckle, salt, pepper, salt&pepper)'
+						help='Noise kind: [gaussian] [speckle] [salt] [pepper] [salt&pepper]'
 					)
 parser.add_argument('--noise_amplitude', 
 						type=float, 
@@ -87,6 +88,12 @@ parser.add_argument('--from_checkpoint',
 						default=False, 
 						metavar='BOOL',
 						help='Use checkpoint listed by experiment number'
+					)
+parser.add_argument('--transform', 
+						type=str, 
+						default='cosine', 
+						metavar='STR',
+						help='Which transform to use: [cosine] or [fourier]'
 					)
 
 # assert(True == False)
@@ -155,19 +162,22 @@ def viz2paper(s, r, cv, ct, log=True):
 	return fig
 
 
-def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0, add_dtw_term=False):
+def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0, add_dtw_term=False, transform='cosine'):
 
+	# Initialize wandb logs
 	wandb.init(project='PixInWavRGB')
 	if summary is not None:
 		wandb.run.name = summary
 		wandb.run.save()
 	wandb.watch(model)
 
+	# Prepare to device
 	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	print(f'Using device: {device}')
 
+	# Parallelize on GPU
 	if torch.cuda.device_count() > 1:
-  		print("Let's use", torch.cuda.device_count(), "GPUs!")
+  		print(f"Let's use {torch.cuda.device_count()} GPUs!")
   		model = nn.DataParallel(model)
 
 	model.to(device)
@@ -175,45 +185,71 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 	# Set to training mode
 	model.train()
 
-	# This is the number of parameters used in the model
+	# Number of parameters in model
 	num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 	print(f'Number of model parameters: {num_params}')
 
+	# Set optimizer
 	optimizer = optim.Adam(model.parameters(), lr=lr)
 
 	ini = time.time()
 	best_loss = np.inf
 
+	# Initialize DTW loss constructor
 	softDTW = SoftDTW(gamma=1.0, normalize=True) 
 
+	# Initialize STFT transform constructor
+	if transform == 'fourier':
+		stft = STFT(
+			filter_length=2 ** 11 - 1,
+			hop_length=132,
+			win_length=2 ** 11 - 1,
+			window='hann'
+		).to(device)
+		stft.num_samples = 67522
+
+	# Start training ...
 	for epoch in range(epochs):
 
-		if prev_epoch != None and epoch < prev_epoch - 1: continue
+		if prev_epoch != None and epoch < prev_epoch - 1: continue # Checkpoint pass
 
+		# Initialize training metrics storage
 		train_loss, train_loss_cover, train_loss_secret, train_loss_spectrum, snr, psnr, ssim_secret, train_dtw_loss = [], [], [], [], [], [], [], []
 		vd_loss, vd_loss_cover, vd_loss_secret, vd_snr, vd_psnr, vd_ssim, vd_dtw = [], [], [], [], [], [], []
 		
 		for i, data in enumerate(tr_loader):
 
-			if prev_i != None and i < prev_i - 1: continue
+			if prev_i != None and i < prev_i - 1: continue # Checkpoint pass
 
 			secrets, covers = data[0].to(device), data[1].to(device)
+			if transform == 'fourier': phase = data[2].to(device)
 			secrets = secrets.permute(0, 3, 1, 2).type(torch.cuda.FloatTensor)
-			covers = covers.unsqueeze(1)
+			covers = covers.unsqueeze(1) if transform == 'cosine' else covers
 
 			optimizer.zero_grad()
 
 			containers, revealed = model(secrets, covers)
 
-			original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
-			container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
-			container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
+			if transform == 'cosine':
+				original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
+				container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
+				container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
+			elif transform == 'fourier': 
+				original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
+				container_wav = stft.inverse(containers.squeeze(1), phase.squeeze(1))
+				container_2x = stft.transform(container_wav)[0].unsqueeze(0)
 
 			loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
-			snr_audio = SNR(covers.cpu(), containers.cpu())
+			snr_audio = SNR(
+				covers, 
+				containers, 
+				phase=None if transform == 'cosine' else phase,
+				transform=transform,
+				transform_constructor= None if transform == 'cosine' else stft
+			)
 			psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
-			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
+			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))[0]
 			objective_loss = loss 
 			if add_dtw_term: objective_loss += 10**(np.floor(np.log10(1/33791)) + 1) * dtw_loss
 			with torch.autograd.set_detect_anomaly(True):
@@ -264,7 +300,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 			# Log images
 			if (i % 50 == 0) and (i != 0):
-				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(model, vd_loader, beta, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
+				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(model, vd_loader, beta, transform=transform, transform_constructor=stft, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
 				
 				vd_loss.append(avg_valid_loss) 
 				vd_loss_cover.append(avg_valid_loss_cover) 
@@ -335,11 +371,13 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 	torch.save(model.state_dict(), os.path.join(os.environ.get('OUT_PATH'), f'models/final_run_{experiment}.pt'))
 	return model, avg_train_loss
 
-def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, verbose=False):
+def validate(model, vd_loader, beta, transform='cosine', transform_constructor=None, dtw_criterion=None, epoch=None, tr_i=None, verbose=False):
 
+	# Set device
 	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	print(f'Using device: {device}')
-
+	
+	# Parallelize on GPU
 	if torch.cuda.device_count() > 1:
   		print("Let's use", torch.cuda.device_count(), "GPUs!")
   		model = nn.DataParallel(model)
@@ -352,7 +390,8 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 
 	valid_loss, valid_loss_cover, valid_loss_secret, valid_loss_spectrum, valid_snr, valid_psnr, valid_ssim, valid_dtw = [], [], [], [], [], [], [], []
 	vd_datalen = len(vd_loader)
-	
+
+	# Start validating ...
 	iniv = time.time()
 	with torch.no_grad():
 		print('Validating current model...')
@@ -360,7 +399,8 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 
 			secrets, covers = data[0].to(device), data[1].to(device)
 			secrets = secrets.permute(0, 3, 1, 2).type(torch.cuda.FloatTensor)
-			covers = covers.unsqueeze(1)
+			if transform == 'fourier': phase = data[2].to(device)
+			covers = covers.unsqueeze(1) if transform == 'cosine' else covers
 
 			containers, revealed = model(secrets, covers)
 
@@ -368,17 +408,30 @@ def validate(model, vd_loader, beta, dtw_criterion=None, epoch=None, tr_i=None, 
 				fig = viz2paper(secrets.cpu(), revealed.cpu(), covers.cpu(), containers.cpu())
 				wandb.log({f"Revelation at epoch {epoch}, vd iteration {tr_i}": fig})
 
-			container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
-			container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
+			if transform == 'cosine':
+				container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
+				container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
+			elif transform == 'fourier':
+				container_wav = transform_constructor.inverse(covers.squeeze(1), phase.squeeze(1))
+				container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
 
 			loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
-			vd_snr_audio = SNR(covers.cpu(), containers.cpu())
+			vd_snr_audio = SNR(
+				covers, 
+				containers,
+				phase=None if transform == 'cosine' else phase,
+				transform=transform, 
+				transform_constructor=None if transform == 'cosine' else transform_constructor
+			)
 			vd_psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
 
 			if dtw_criterion is not None:
-				original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
-				dtw_loss = dtw_criterion(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
+				if transform == 'cosine':
+					original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
+				elif transform == 'fourier':
+					original_wav = transform_constructor.inverse(covers.squeeze(1), phase.squeeze(1))
+				dtw_loss = dtw_criterion(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))[0]
 
 			valid_loss.append(loss.detach().item())
 			valid_loss_cover.append(loss_cover.detach().item())
@@ -445,14 +498,17 @@ if __name__ == '__main__':
 
 	train_loader = loader(
 		set='train', 
-		rgb=args.rgb
+		rgb=args.rgb,
+		transform=args.transform,
 	)
 	test_loader = loader(
 		set='test',
-		rgb=args.rgb
+		rgb=args.rgb,
+		transform=args.transform,
 	)
 
 	model = StegoUNet(
+		transform=args.transform,
 		add_noise=args.add_noise, 
 		noise_kind=args.noise_kind, 
 		noise_amplitude=args.noise_amplitude
@@ -477,7 +533,8 @@ if __name__ == '__main__':
 		prev_i=checkpoint['i'] if args.from_checkpoint else None,
 		summary=args.summary,
 		experiment=args.experiment,
-		add_dtw_term=args.add_dtw_term
+		add_dtw_term=args.add_dtw_term,
+		transform=args.transform,
 	)
 
 

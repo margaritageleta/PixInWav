@@ -92,8 +92,10 @@ class Up(nn.Module):
         return self.conv(x)
 
 class PrepHidingNet(nn.Module):
-    def __init__(self):
+    def __init__(self, transform='cosine'):
         super(PrepHidingNet, self).__init__()
+
+        self._transform = transform
         
         self.pixel_shuffle = nn.PixelShuffle(2)
 
@@ -111,7 +113,12 @@ class PrepHidingNet(nn.Module):
 
         # Pixel Shuffle
         im = self.pixel_shuffle(im)
-        im_enc = [nn.Upsample(scale_factor=(8, 2), mode='bilinear', align_corners=True)(im)]
+
+        if self._transform == 'cosine':
+            im_enc = [nn.Upsample(scale_factor=(8, 2), mode='bilinear', align_corners=True)(im)]
+        elif self._transform == 'fourier':
+            im_enc = [nn.Upsample(scale_factor=(2, 1), mode='bilinear', align_corners=True)(im)]
+        else: raise Exception(f'Transform not implemented')
 
         for enc_layer_idx, enc_layer in enumerate(self.im_encoder_layers):
             im_enc.append(enc_layer(im_enc[-1]))
@@ -166,6 +173,7 @@ class RevealNet(nn.Module):
 class StegoUNet(nn.Module):
     def __init__(
         self, 
+        transform='cosine',
         add_noise=False, 
         noise_kind=None, 
         noise_amplitude=None, 
@@ -176,16 +184,16 @@ class StegoUNet(nn.Module):
         super().__init__()
 
         # Sub-networks
-        self.PHN = PrepHidingNet()
+        self.PHN = PrepHidingNet(transform)
         self.RN = RevealNet()
 
         # STDCT parameters
         self.frame_length = frame_length
         self.frame_step = frame_step
-        self.switch = switch
+        self.switch = switch if transform == 'cosine' else False
 
         # Noise parameters
-        self.add_noise = add_noise
+        self.add_noise = add_noise if transform == 'cosine' else False
         self.noise_kind = noise_kind
         self.noise_amplitude = noise_amplitude
 
