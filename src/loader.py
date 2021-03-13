@@ -10,6 +10,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from pystct import sdct_torch, isdct_torch
+from torch_stft import STFT
 import matplotlib.pyplot as plt
 
 MY_FOLDER = os.environ.get('USER_PATH')
@@ -53,17 +54,31 @@ class AudioProcessor():
     """
     Function to preprocess the audios from the custom 
     dataset. We set the [_limit] in terms of samples,
-    the [_frame_length] and [_frame_step] of the STCT
+    the [_frame_length] and [_frame_step] of the [transform]
     transform. 
+
+    If transform is [cosine] it returns just the STDCT matrix.
+    Else, if transform is [fourier] returns the STFT magnitude
+    and phase.
     """
-    def __init__(self, audio_path):
-        self.sound, self.sr = torchaudio.load(audio_path)
+    def __init__(self, transform):
         # Corresponds to 1.5 seconds approximately
         self._limit = 67522 # 2 ** 16 + 2 ** 11 - 2 ** 6 + 2
-        self._frame_length = 2 ** 12
-        self._frame_step = 2 ** 6 - 2
+        self._frame_length = 2 ** 12 if transform == 'cosine' else 2 ** 11 - 1
+        self._frame_step = 2 ** 6 - 2 if transform == 'cosine' else 132
 
-    def forward(self):
+        self._transform = transform
+        if self._transform == 'fourier':
+            self.stft = STFT(
+                filter_length=self._frame_length, 
+                hop_length=self._frame_step, 
+                win_length=self._frame_length,
+                window='hann'
+            )   
+
+    def forward(self, audio_path):
+        self.sound, self.sr = torchaudio.load(audio_path)
+        
         # Get the samples dimension
         sound = self.sound[0]
         # Create a temporary array
@@ -74,12 +89,17 @@ class AudioProcessor():
         else:
             i = random.randint(0, len(sound) - self._limit)
             tmp[:] = sound[i:i + self._limit]
-        sound_stct = sdct_torch(
-            tmp.type(torch.float32),
-            frame_length = self._frame_length,
-            frame_step = self._frame_step
-        )
-        return sound_stct
+        if self._transform == 'cosine':
+            return sdct_torch(
+                tmp.type(torch.float32),
+                frame_length = self._frame_length,
+                frame_step = self._frame_step
+            )
+        elif self._transform == 'fourier':
+            magnitude, phase = self.stft.transform(tmp.unsqueeze(0).type(torch.float32))
+            return magnitude, phase
+
+        else: raise Exception(f'Transform not implemented')
 
 class StegoDataset(torch.utils.data.Dataset):
     """
@@ -92,6 +112,8 @@ class StegoDataset(torch.utils.data.Dataset):
     subdirectories.
     - [rgb] is a boolean that indicated whether we are using color (RGB)
     images or black and white ones (B&W).
+    - [transform] defines the transform to use to process audios. Can be
+    either [cosine] or [fourier].
     - [image_extension] defines the extension of the image files. 
     By default it is set to JPEG.
     - [audio_extension] defines the extension of the audio files. 
@@ -105,6 +127,7 @@ class StegoDataset(torch.utils.data.Dataset):
         folder: str,
         mappings: dict,
         rgb: bool = True,
+        transform: str = 'cosine',
         image_extension: str = "JPEG",
         audio_extension: str = "wav"
     ):
@@ -115,6 +138,7 @@ class StegoDataset(torch.utils.data.Dataset):
         self._MAX_LIMIT = 10000 if folder == 'train' else 900
         self._MAX_AUDIO_LIMIT = 17584 if folder == 'train' else 946
         self._colorspace = 'RGB' if rgb else 'L'
+        self._transform = transform
 
         print(f'IMAGE DATA LOCATED AT: {self._image_data_path}')
         print(f'AUDIO DATA LOCATED AT: {self._audio_data_path}')
@@ -144,6 +168,8 @@ class StegoDataset(torch.utils.data.Dataset):
             if _aux_index == self._MAX_AUDIO_LIMIT: break
         random.shuffle(self._audios)
 
+        self._AUDIO_PROCESSOR = AudioProcessor(transform=self._transform)
+
         print('Set up done')
 
     def __len__(self):
@@ -158,16 +184,23 @@ class StegoDataset(torch.utils.data.Dataset):
         audio_path = self._audios[rand_indexer]
 
         img = np.asarray(ImageProcessor(image_path=img_path, colorspace=self._colorspace).forward()).astype('float64')
-        sound_stct = AudioProcessor(audio_path).forward()
+        
+        if self._transform == 'cosine':
+            sound_stct = self._AUDIO_PROCESSOR.forward(audio_path)
+            return (img, sound_stct)
+        elif self._transform == 'fourier':
+            magnitude_stft, phase_stft = self._AUDIO_PROCESSOR.forward(audio_path)
+            return (img, magnitude_stft, phase_stft)
+        else: raise Exception(f'Transform not implemented')
 
-        return (img, sound_stct)
-
-def loader(set='train', rgb=True):
+def loader(set='train', rgb=True, transform='cosine'):
     """
     Prepares the custom dataloader.
     - [set] defines the set type. Can be either [train] or [test].
     - [rgb] is a boolean that indicated whether we are using color (RGB)
     images or black and white ones (B&W).
+    - [transform] defines the transform to use to process audios. Can be
+    either [cosine] or [fourier].
     """
     print('Preparing dataset...')
     mappings = {}
@@ -181,7 +214,8 @@ def loader(set='train', rgb=True):
         audio_root=AUDIO_FOLDER,
         folder=set,
         mappings=mappings,
-        rgb=rgb
+        rgb=rgb,
+        transform=transform
     )
 
     print('Dataset prepared.')
