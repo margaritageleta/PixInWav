@@ -95,6 +95,12 @@ parser.add_argument('--transform',
 						metavar='STR',
 						help='Which transform to use: [cosine] or [fourier]'
 					)
+parser.add_argument('--on_phase', 
+						type=parse_keyword, 
+						default=False, 
+						metavar='BOOL',
+						help='If [fourier] hide on magnitude or phase'
+					)
 
 # assert(True == False)
 
@@ -162,7 +168,7 @@ def viz2paper(s, r, cv, ct, log=True):
 	return fig
 
 
-def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0, add_dtw_term=False, transform='cosine'):
+def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0, add_dtw_term=False, transform='cosine', on_phase=False):
 
 	# Initialize wandb logs
 	wandb.init(project='PixInWavRGB')
@@ -228,25 +234,37 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 			optimizer.zero_grad()
 
-			containers, revealed = model(secrets, covers)
+			if (transform == 'fourier') and (on_phase):
+				containers, revealed = model(secrets, phase)
+			else: containers, revealed = model(secrets, covers)
 
 			if transform == 'cosine':
 				original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
 				container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
 				container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
+				loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
+			
 			elif transform == 'fourier': 
-				original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
-				container_wav = stft.inverse(containers.squeeze(1), phase.squeeze(1))
-				container_2x = stft.transform(container_wav)[0].unsqueeze(0)
+				if on_phase:
+					original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
+					container_wav = stft.inverse(covers.squeeze(1), containers.squeeze(1))
+					container_2x = stft.transform(container_wav)[1].unsqueeze(0)
+					loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x, revealed, beta)
+				else:
+					original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
+					container_wav = stft.inverse(containers.squeeze(1), phase.squeeze(1))
+					container_2x = stft.transform(container_wav)[0].unsqueeze(0)
+					loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 
-			loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 			snr_audio = SNR(
 				covers, 
 				containers, 
 				phase=None if transform == 'cosine' else phase,
 				transform=transform,
-				transform_constructor= None if transform == 'cosine' else stft
+				transform_constructor= None if transform == 'cosine' else stft,
+				on_phase=on_phase
 			)
+
 			psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
 			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))[0]
@@ -300,7 +318,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 			# Log images
 			if (i % 50 == 0) and (i != 0):
-				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(model, vd_loader, beta, transform=transform, transform_constructor=stft, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
+				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(model, vd_loader, beta, transform=transform, transform_constructor=stft, on_phase=on_phase, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
 				
 				vd_loss.append(avg_valid_loss) 
 				vd_loss_cover.append(avg_valid_loss_cover) 
@@ -371,7 +389,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 	torch.save(model.state_dict(), os.path.join(os.environ.get('OUT_PATH'), f'models/final_run_{experiment}.pt'))
 	return model, avg_train_loss
 
-def validate(model, vd_loader, beta, transform='cosine', transform_constructor=None, dtw_criterion=None, epoch=None, tr_i=None, verbose=False):
+def validate(model, vd_loader, beta, transform='cosine', transform_constructor=None, on_phase=False, dtw_criterion=None, epoch=None, tr_i=None, verbose=False):
 
 	# Set device
 	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -402,26 +420,38 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 			if transform == 'fourier': phase = data[2].to(device)
 			covers = covers.unsqueeze(1) if transform == 'cosine' else covers
 
-			containers, revealed = model(secrets, covers)
+			if (transform == 'fourier') and (on_phase):
+				containers, revealed = model(secrets, phase)
+			else: containers, revealed = model(secrets, covers)
 
 			if i == 0:
-				fig = viz2paper(secrets.cpu(), revealed.cpu(), covers.cpu(), containers.cpu())
+				if (transform == 'fourier') and (on_phase):
+					fig = viz2paper(secrets.cpu(), revealed.cpu(), phase.cpu(), containers.cpu())
+				else:
+					fig = viz2paper(secrets.cpu(), revealed.cpu(), covers.cpu(), containers.cpu())
 				wandb.log({f"Revelation at epoch {epoch}, vd iteration {tr_i}": fig})
 
 			if transform == 'cosine':
 				container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
 				container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
+				loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 			elif transform == 'fourier':
-				container_wav = transform_constructor.inverse(covers.squeeze(1), phase.squeeze(1))
-				container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
+				if on_phase:
+					container_wav = transform_constructor.inverse(covers.squeeze(1), containers.squeeze(1))
+					container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
+					loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x, revealed, beta)
+				else:	
+					container_wav = transform_constructor.inverse(containers.squeeze(1), phase.squeeze(1))
+					container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
+					loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 
-			loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 			vd_snr_audio = SNR(
 				covers, 
 				containers,
 				phase=None if transform == 'cosine' else phase,
 				transform=transform, 
-				transform_constructor=None if transform == 'cosine' else transform_constructor
+				transform_constructor=None if transform == 'cosine' else transform_constructor,
+				on_phase=on_phase
 			)
 			vd_psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
@@ -454,7 +484,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 				DTW {dtw_loss.detach().item()}'
 			)
 
-			if i >= 2: break
+			if i >= 500: break
 			# if i >= vd_datalen: break
 
 		avg_valid_loss = np.mean(valid_loss)
@@ -535,6 +565,7 @@ if __name__ == '__main__':
 		experiment=args.experiment,
 		add_dtw_term=args.add_dtw_term,
 		transform=args.transform,
+		on_phase=args.on_phase
 	)
 
 

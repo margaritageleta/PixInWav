@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from math import exp
 
-def SNR(cover, container, phase, transform, transform_constructor=None):
+def SNR(cover, container, phase, transform, transform_constructor=None, on_phase=False):
 	"""
     Computes SNR (Signal-to-Noise-Ratio)
 	metric between cover and container signals.
@@ -22,8 +22,12 @@ def SNR(cover, container, phase, transform, transform_constructor=None):
 		cover_wav = isdct(cover.squeeze(0).squeeze(0).cpu().detach().numpy(), frame_step=62)
 		noise_wav = isdct((container - cover).squeeze(0).squeeze(0).cpu().detach().numpy(), frame_step=62)
 	elif (transform == 'fourier') and (transform_constructor is not None):
-		cover_wav = transform_constructor.inverse(cover.squeeze(1), phase.squeeze(1)).cpu().data.numpy()[..., :]
-		noise_wav = transform_constructor.inverse(container.squeeze(1), phase.squeeze(1)).cpu().data.numpy()[..., :]
+		if on_phase:
+			cover_wav = transform_constructor.inverse(cover.squeeze(1), phase.squeeze(1)).cpu().data.numpy()[..., :]
+			noise_wav = transform_constructor.inverse(cover.squeeze(1), (container - phase).squeeze(1)).cpu().data.numpy()[..., :]
+		else:
+			cover_wav = transform_constructor.inverse(cover.squeeze(1), phase.squeeze(1)).cpu().data.numpy()[..., :]
+			noise_wav = transform_constructor.inverse((container - cover).squeeze(1), phase.squeeze(1)).cpu().data.numpy()[..., :]
 	else: raise Exception('Transform not defined')
 	
 	signal = np.sum(np.abs(np.fft.fft(cover_wav)) ** 2) / len(np.fft.fft(cover_wav))

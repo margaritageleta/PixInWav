@@ -4,12 +4,14 @@
 echo "Executing experiment $1"
 srun -u -c 1 -p gpi.develop --time 02:00:00 --mem 32G --gres=gpu:2,gpumem:12G python3 ../src/trainer_rgb.py --beta $2 \
 --lr $3 \
---summary "Run $1: Original, beta=$2, lr=$3" \
+--summary "Run $1: Phase STFT, beta=$2, lr=$3" \
 --experiment $1 \
---add_noise True \
---noise_kind gaussian speckle \
---noise_amplitude 0.4 0.2 \
+--add_noise False \
+--noise_kind None \
+--noise_amplitude 0 \
 --add_dtw_term True \
 --rgb True \
---from_checkpoint False
+--from_checkpoint False \
+--transform fourier \
+--on_phase True
 echo "Success!"
