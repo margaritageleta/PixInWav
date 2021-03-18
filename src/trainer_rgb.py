@@ -101,6 +101,12 @@ parser.add_argument('--on_phase',
 						metavar='BOOL',
 						help='If [fourier] hide on magnitude or phase'
 					)
+parser.add_argument('--architecture', 
+						type=str, 
+						default='resindep', 
+						metavar='STR',
+						help='Architecture of StegoUNet: [resindep] [resdep] [resscale] [plaindep]'
+					)
 
 # assert(True == False)
 
@@ -267,7 +273,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 			psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
-			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))[0]
+			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
 			objective_loss = loss 
 			if add_dtw_term: objective_loss += 10**(np.floor(np.log10(1/33791)) + 1) * dtw_loss
 			with torch.autograd.set_detect_anomaly(True):
@@ -318,7 +324,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 			# Log images
 			if (i % 50 == 0) and (i != 0):
-				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(model, vd_loader, beta, transform=transform, transform_constructor=stft, on_phase=on_phase, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
+				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(model, vd_loader, beta, transform=transform, transform_constructor=stft if transform=='fourier' else None, on_phase=on_phase, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
 				
 				vd_loss.append(avg_valid_loss) 
 				vd_loss_cover.append(avg_valid_loss_cover) 
@@ -328,7 +334,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 				vd_ssim.append(avg_valid_ssim) 
 				vd_dtw.append(avg_valid_dtw)
 
-				is_best = bool(avg_train_loss < best_loss)
+				is_best = bool(avg_valid_loss < best_loss)
 				# Save checkpoint if is a new best
 				save_checkpoint({
 					'epoch': epoch + 1,
@@ -461,7 +467,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 					original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
 				elif transform == 'fourier':
 					original_wav = transform_constructor.inverse(covers.squeeze(1), phase.squeeze(1))
-				dtw_loss = dtw_criterion(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))[0]
+				dtw_loss = dtw_criterion(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
 
 			valid_loss.append(loss.detach().item())
 			valid_loss_cover.append(loss_cover.detach().item())
@@ -538,6 +544,7 @@ if __name__ == '__main__':
 	)
 
 	model = StegoUNet(
+		architecture=args.architecture,
 		transform=args.transform,
 		add_noise=args.add_noise, 
 		noise_kind=args.noise_kind, 

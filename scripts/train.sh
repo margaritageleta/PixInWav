@@ -13,7 +13,7 @@ sbatch <<EOT
 echo "Executing experiment $1"
 python3 ../src/trainer_rgb.py --beta $2 \
 --lr $3 \
---summary "Run $1: Fourier Phase, beta=$2, lr=$3" \
+--summary "Run $1: Original, beta=$2, lr=$3" \
 --experiment $1 \
 --add_noise False \
 --noise_kind None \
@@ -21,7 +21,7 @@ python3 ../src/trainer_rgb.py --beta $2 \
 --add_dtw_term True \
 --rgb True \
 --from_checkpoint False \
---transform fourier \
---on_phase True
+--transform cosine \
+--on_phase False
 echo "Success!"
 EOT
