@@ -130,7 +130,7 @@ class PrepHidingNet(nn.Module):
         else: raise Exception('Unknown architecture')
         
 
-    def forward(self, im):
+    def forward(self, im, au=None):
 
         im = self.pixel_shuffle(im)
 
@@ -236,7 +236,11 @@ class StegoUNet(nn.Module):
         # Create a new channel with 0 (R,G,B) -> (R,G,B,0)
         zero = torch.zeros(1, 1, 256, 256).type(torch.float32).cuda()
         secret = torch.cat((secret,zero),1)
-        hidden_signal = self.PHN(secret)
+        
+        if (self._architecture == 'plaindep') or (self._architecture == 'resdep'):
+            hidden_signal = self.PHN(secret, cover)
+        else:
+            hidden_signal = self.PHN(secret)
 
         # Residual connection
         container = cover + hidden_signal if (self._architecture != 'plaindep') else hidden_signal
