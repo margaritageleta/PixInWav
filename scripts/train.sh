@@ -13,7 +13,7 @@ sbatch <<EOT
 echo "Executing experiment $1"
 python3 ../src/trainer_rgb.py --beta $2 \
 --lr $3 \
---summary "Run $1: Original, beta=$2, lr=$3" \
+--summary "Run $1: Res-Scale, beta=$2, lr=$3" \
 --experiment $1 \
 --add_noise False \
 --noise_kind None \
@@ -22,6 +22,7 @@ python3 ../src/trainer_rgb.py --beta $2 \
 --rgb True \
 --from_checkpoint False \
 --transform cosine \
---on_phase False
+--on_phase False \
+--architecture rescale
 echo "Success!"
 EOT

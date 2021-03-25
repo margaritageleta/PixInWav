@@ -8,7 +8,7 @@ import numpy as np
 import torch.nn as nn
 from loader import loader
 import torch.optim as optim
-from umodel_rgb_shuffle import StegoUNet
+from umodel import StegoUNet
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from torch_stft import STFT
@@ -274,6 +274,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
 			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
+			if transform == 'fourier': dtw_loss = dtw_loss[0]
 			objective_loss = loss 
 			if add_dtw_term: objective_loss += 10**(np.floor(np.log10(1/33791)) + 1) * dtw_loss
 			with torch.autograd.set_detect_anomaly(True):
@@ -468,6 +469,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 				elif transform == 'fourier':
 					original_wav = transform_constructor.inverse(covers.squeeze(1), phase.squeeze(1))
 				dtw_loss = dtw_criterion(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
+				if transform == 'fourier': dtw_loss = dtw_loss[0]
 
 			valid_loss.append(loss.detach().item())
 			valid_loss_cover.append(loss_cover.detach().item())
@@ -544,7 +546,7 @@ if __name__ == '__main__':
 	)
 
 	model = StegoUNet(
-		architecture=args.architecture,
+		# architecture=args.architecture,
 		transform=args.transform,
 		add_noise=args.add_noise, 
 		noise_kind=args.noise_kind, 

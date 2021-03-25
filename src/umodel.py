@@ -143,7 +143,7 @@ class PrepHidingNet(nn.Module):
         if self._architecture == 'resscale':
             return self.scale(im_enc[0])
 
-        elif self._architecture in set('resindep', 'resdep', 'plaindep'):
+        elif self._architecture in ['resindep', 'resdep', 'plaindep']:
 
             if (self._architecture == 'resdep') or (self._architecture == 'plaindep'):
                 au_enc = [au]
@@ -216,7 +216,7 @@ class StegoUNet(nn.Module):
     ):
         super().__init__()
         # Architecture type
-        self._architecture = architeture
+        self._architecture = architecture
 
         # Sub-networks
         self.PHN = PrepHidingNet(self._architecture, transform)

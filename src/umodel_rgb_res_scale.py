@@ -157,6 +157,7 @@ class RevealNet(nn.Module):
 class StegoUNet(nn.Module):
     def __init__(
         self, 
+        transform='cosine',
         add_noise=False, 
         noise_kind=None, 
         noise_amplitude=None, 
