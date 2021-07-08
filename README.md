@@ -7,7 +7,16 @@ This repository includes a python implemenation of `StegoUNet`, a deep neural ne
 ![alt text](front/img/example.png "Example")
 
 If you find this paper and implementation useful, please consider citing our work:
-> Citation
+```{tex}
+@misc{geleta2021pixinwav,
+      title={PixInWav: Residual Steganography for Hiding Pixels in Audio}, 
+      author={Margarita Geleta and Cristina Punti and Kevin McGuinness and Jordi Pons and Cristian Canton and Xavier Giro-i-Nieto},
+      year={2021},
+      eprint={2106.09814},
+      archivePrefix={arXiv},
+      primaryClass={cs.MM}
+}
+```
 
 ## Repository outline
 
@@ -96,4 +105,4 @@ Different reconstruction losses can be used to train the network. To use the wav
 
 ## License
 
-**NOTICE**: This software is available for use free of charge for academic research use only. Commercial users, for profit companies or consultants, and non-profit institutions not qualifying as *academic research* must contact `rita.geleta@jediupc.com` for a separate license. 
+**NOTICE**: This software is available for use free of charge for academic research use only. Commercial users, for profit companies or consultants, and non-profit institutions not qualifying as *academic research* must contact `mgeleta@uci.edu` for a separate license. 
