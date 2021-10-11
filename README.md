@@ -6,7 +6,7 @@ This repository includes a python implemenation of `StegoUNet`, a deep neural ne
 
 ![alt text](front/img/example.png "Example")
 
-If you find this paper and implementation useful, please consider citing our work:
+If you find this paper or implementation useful, please consider citing our work:
 ```{tex}
 @misc{geleta2021pixinwav,
       title={PixInWav: Residual Steganography for Hiding Pixels in Audio}, 
@@ -22,12 +22,9 @@ If you find this paper and implementation useful, please consider citing our wor
 
 In the `src` folder we find:
 
-- `umodel_rgb_shuffle.py`: the best-performing audio steganography model with RGB images as input.
-- `loader_rgb.py`: the loader script to create the customized dataset from RGB image (ImageNet) + audio.
-- `trainer_rgb.py`: a script to either train a model from scratch using provided training data or loading a pre-trained `StegoUNet` model for RGB images.
-- `umodel.py`: an audio steganography model with B&W images as input.
-- `loader.py`: the loader script to create the customized dataset from B&W image (ImageNet) + audio.
-- `trainer.py`: a script to either train a model from scratch using provided training data or loading a pre-trained `StegoUNet` model for B&W images.
+- `umodel.py`: the complete audio steganography model with RGB or B&W  images as input.
+- `loader.py`: the loader script to create the customized dataset from RGB or B&W image (ImageNet) + audio.
+- `trainer_rgb.py`: a script to either train a model from scratch using provided training data or loading a pre-trained `StegoUNet` model for RGB or B&W images.
 - `losses.py`: a script with all the losses and metrics defined for training. Uses a [courtesy script](https://github.com/Po-Hsun-Su/pytorch-ssim) to compute the SSIM metric.
 - `pystct.py`: [courtesy script](https://github.com/jonashaag/pydct) to perform Short-Time Cosine Transform on raw audio waveforms.
 - `pydtw.py`: [courtesy script](https://github.com/Sleepwalking/pytorch-softdtw) to compute SoftDTW as an additional term in the loss function.
@@ -62,6 +59,14 @@ $ (env) srun -u --gres=gpu:2,gpumem:12G
         --lr [learning_rate_value] 
         --summary "[description_of_the_run]" 
         --experiment [experiment_number]
+        --add_noise [True/False]
+        --noise_kind [gaussian/speckle/salt/pepper/salt&pepper]
+        --noise_amplitude [float]
+        --add_dtw_term [True/False]
+        --rgb [use_rgb_or_b&w_images]
+        --transform [cosine/fourier]
+        --on_phase [if_fourier_hide_on_magnitude_or_phase]
+        --architecture [resindep/resdep/resscale/plaindep]
 ```
 Reserve as minimum 12G of GPU memory per GPU, otherwise you may be CUDA OOM. Or, run the `sbatch` script as follows:
 ```
@@ -69,6 +74,20 @@ $ (env) ./train.sh [experiment_number]
 ```
 Defining all the arguments and hyperparameters in the script beforehand.
 
+### Loss function and optimization
++ `--lr` defined the learning rate of the Adam optimizer.
++ `--beta` determines the beta parameter of the loss function, refer to the paper for details. 
++ `--add_dtw_term` allows adding an additional term to the loss function. Adding it has shown improvements, refer to the paper for details.
+### Model architecture and constraints
++ With `--rgb` you can choose to train on RGB or B&W images.
++ `--architecture` allows to change the underlying architecture. It lists the 4 types of model explained in the paper, refer to it for more details.
++ With `--transform` you can change the transform to obtain the audio spectrogram. Available transforms include STDCT (Short-Time Discrete Cosine Transform Type II) and STFT (Short-Time Fourier). 
++ If you use STFT, you can choose to hide the image in the magnitude or in the phase. You can control thos behaviour with `--on_phase`.
+### Noise addition
++ For increasing the robustness of the steganographic function, you can add noise into the audio during training time with `--add_noise`.
++ If you `--add_noise` then you should choose the `--noise_kind` and `--noise_amplitude`.
+
+### Monitor the training process
 By default, `wandb` checkpoints are created when you execute the `trainer_rgb.py` script (you should login into your [wandb](https://wandb.ai) account first). This allows tracking the learning curves in the web application.
 
 If you prefer using `tensorboard` checkpoints, you will need to install `tensorboardX` and add the needed lines of code to save the values. Once it is done, just run in another shell window:
@@ -77,11 +96,14 @@ $ (env) tensorboard dev upload --logdir 'logs/[timestamp]'
 ```
 Where `logs` is the directory you choose to store your logs.
 
+### Training from a checkpoint
 To train a model from a checkpoint, follow these steps in the `main` function in `trainer_rgb.py`:
 ```
+## Load the checkpoint
 chk = torch.load('[checkpoint_path]/[checkpoint_name].pt', map_location='cpu')
 model = StegoUNet()
 model = nn.DataParallel(model)
+## Load the weights into the model
 model.load_state_dict(chk['state_dict'])
 
 [...]
@@ -94,14 +116,12 @@ train(
     lr=float(args.lr), 
     epochs=15, 
     slide=15,
-    prev_epoch=chk['epoch'], 
-    prev_i=chk['i'],
+    prev_epoch=chk['epoch'], ## Specify this!
+    prev_i=chk['i'], ## Specify this!
     summary=args.summary,
     experiment=int(args.experiment)
 )
 ```
-
-Different reconstruction losses can be used to train the network. To use the waveform reconstruction loss term, please leave the `dtw` term in the final `loss`.
 
 ## License
 
