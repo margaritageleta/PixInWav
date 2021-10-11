@@ -19,23 +19,23 @@ doi: arXiv:2106.09814
 date-released: 2021-06-17
 url: "https://github.com/margaritageleta/PixInWav"
 preferred-citation:
-type: article
-  authors:
-    - family-names: Geleta
-        given-names: Margarita
-        orcid: https://orcid.org/0000-0001-5823-9776 
-    - family-names: Puntí
-        given-names: Cristina
-    - family-names: McGuiness
-        given-names: Kevin
-    - family-names: Pons
-        given-names: Jordi
-    - family-names: Canton
-        given-names: Cristian
-    - family-names: Giro-i-Nieto
-        given-names: Xavi
-  doi: "arXiv:2106.09814"
-  journal: "arXiv preprint arXiv:2106.09814"
-  month: 6
-  title: "PixInWav: Residual Steganography for Hiding Pixels in Audio"
-  year: 2021
+    type: article
+    authors:
+        - family-names: Geleta
+            given-names: Margarita
+            orcid: https://orcid.org/0000-0001-5823-9776 
+        - family-names: Puntí
+            given-names: Cristina
+        - family-names: McGuiness
+            given-names: Kevin
+        - family-names: Pons
+            given-names: Jordi
+        - family-names: Canton
+            given-names: Cristian
+        - family-names: Giro-i-Nieto
+            given-names: Xavi
+    doi: "arXiv:2106.09814"
+    journal: "arXiv preprint arXiv:2106.09814"
+    month: 6
+    title: "PixInWav: Residual Steganography for Hiding Pixels in Audio"
+    year: 2021
