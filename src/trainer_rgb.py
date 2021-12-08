@@ -14,17 +14,16 @@ import matplotlib.pyplot as plt
 from torch_stft import STFT
 from pystct import sdct_torch, isdct_torch
 from losses import ssim, SNR, PSNR, StegoLoss
-from pydtw import SoftDTW
 
 def parse_keyword(keyword):
-    if isinstance(keyword, bool):
-       return keyword
-    if keyword.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif keyword.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Wrong keyword.')
+	if isinstance(keyword, bool):
+	   return keyword
+	if keyword.lower() in ('yes', 'true', 't', 'y', '1'):
+		return True
+	elif keyword.lower() in ('no', 'false', 'f', 'n', '0'):
+		return False
+	else:
+		raise argparse.ArgumentTypeError('Wrong keyword.')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--beta', 
@@ -71,11 +70,11 @@ parser.add_argument('--noise_amplitude',
 						metavar='FLOAT',
 						help='Noise amplitude'
 					)
-parser.add_argument('--add_dtw_term', 
+parser.add_argument('--add_l1_term', 
 						type=parse_keyword, 
 						default=False, 
 						metavar='BOOL',
-						help='Add DTW term in the loss function'
+						help='Add L1 term in the loss function'
 					)
 parser.add_argument('--rgb', 
 						type=parse_keyword, 
@@ -100,6 +99,12 @@ parser.add_argument('--on_phase',
 						default=False, 
 						metavar='BOOL',
 						help='If [fourier] hide on magnitude or phase'
+					)
+parser.add_argument('--phase_type',
+						type=str, 
+						default=None, 
+						metavar='STR',
+						help='If [fourier] and [on_phase], type of merging mag+phase: [None], [mean], [2D], [3D] or [RN]'
 					)
 parser.add_argument('--architecture', 
 						type=str, 
@@ -174,7 +179,7 @@ def viz2paper(s, r, cv, ct, log=True):
 	return fig
 
 
-def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0, add_dtw_term=False, transform='cosine', on_phase=False):
+def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, prev_i = None, summary=None, slide=50, experiment=0, add_l1_term=False, transform='cosine', on_phase=False, phase_type=None):
 
 	# Initialize wandb logs
 	wandb.init(project='PixInWavRGB')
@@ -189,8 +194,8 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 	# Parallelize on GPU
 	if torch.cuda.device_count() > 1:
-  		print(f"Let's use {torch.cuda.device_count()} GPUs!")
-  		model = nn.DataParallel(model)
+		  print(f"Let's use {torch.cuda.device_count()} GPUs!")
+		  model = nn.DataParallel(model)
 
 	model.to(device)
 
@@ -207,8 +212,8 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 	ini = time.time()
 	best_loss = np.inf
 
-	# Initialize DTW loss constructor
-	softDTW = SoftDTW(gamma=1.0, normalize=True) 
+	# Initialize L1 loss constructor
+	l1wavLoss = nn.L1Loss()
 
 	# Initialize STFT transform constructor
 	if transform == 'fourier':
@@ -226,8 +231,8 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 		if prev_epoch != None and epoch < prev_epoch - 1: continue # Checkpoint pass
 
 		# Initialize training metrics storage
-		train_loss, train_loss_cover, train_loss_secret, train_loss_spectrum, snr, psnr, ssim_secret, train_dtw_loss = [], [], [], [], [], [], [], []
-		vd_loss, vd_loss_cover, vd_loss_secret, vd_snr, vd_psnr, vd_ssim, vd_dtw = [], [], [], [], [], [], []
+		train_loss, train_loss_cover, train_loss_secret, train_loss_spectrum, snr, psnr, ssim_secret, train_l1_loss = [], [], [], [], [], [], [], []
+		vd_loss, vd_loss_cover, vd_loss_secret, vd_snr, vd_psnr, vd_ssim, vd_l1 = [], [], [], [], [], [], []
 		
 		for i, data in enumerate(tr_loader):
 
@@ -241,13 +246,16 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			optimizer.zero_grad()
 
 			if (transform == 'fourier') and (on_phase):
-				containers, revealed = model(secrets, phase)
+				if phase_type is None:
+					containers, revealed = model(secrets, phase)
+				else:
+					containers, revealed = model(secrets, covers, phase)
 			else: containers, revealed = model(secrets, covers)
 
 			if transform == 'cosine':
-				original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
-				container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
-				container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
+				original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=1024, frame_step=130, window=torch.hamming_window)
+				container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=1024, frame_step=130, window=torch.hamming_window)
+				container_2x = sdct_torch(container_wav, frame_length=1024, frame_step=130, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
 				loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 			
 			elif transform == 'fourier': 
@@ -273,10 +281,9 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 
 			psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
-			dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
-			if transform == 'fourier': dtw_loss = dtw_loss[0]
+			l1_loss = l1wavLoss(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
 			objective_loss = loss 
-			if add_dtw_term: objective_loss += 10**(np.floor(np.log10(1/33791)) + 1) * dtw_loss
+			objective_loss += 0.01 * l1_loss
 			with torch.autograd.set_detect_anomaly(True):
 				objective_loss.backward()
 			optimizer.step()
@@ -288,7 +295,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			snr.append(snr_audio)
 			psnr.append(psnr_image.detach().item())
 			ssim_secret.append(ssim_image.detach().item())
-			train_dtw_loss.append(dtw_loss.detach().item())
+			train_l1_loss.append(l1_loss.detach().item())
 
 			avg_train_loss = np.mean(train_loss[-slide:])
 			avg_train_loss_cover = np.mean(train_loss_cover[-slide:])
@@ -297,7 +304,8 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			avg_snr = np.mean(snr[-slide:])
 			avg_ssim = np.mean(ssim_secret[-slide:])
 			avg_psnr = np.mean(psnr[-slide:])
-			avg_dtw_loss = np.mean(train_dtw_loss[-slide:])
+			avg_l1_loss = np.mean(train_l1_loss[-slide:])
+			avg_l1_loss = np.mean(train_l1_loss[-slide:])
 
 			print(
 				f'(#{i})[{np.round(time.time()-ini,2)}s]\
@@ -308,7 +316,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 				SNR {snr_audio},\
 				PSNR {psnr_image.detach().item()},\
 				SSIM {ssim_image.detach().item()},\
-				DTW {dtw_loss.detach().item()}' 
+				L1 {l1_loss.detach().item()}' 
 			)
 
 			# Log train average loss to wandb
@@ -320,12 +328,12 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 				'SNR': avg_snr,
 				'PSNR': avg_psnr,
 				'SSIM': avg_ssim,
-				'DTW': avg_dtw_loss,
+				'L1': avg_l1_loss,
 			})
 
 			# Log images
 			if (i % 50 == 0) and (i != 0):
-				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(model, vd_loader, beta, transform=transform, transform_constructor=stft if transform=='fourier' else None, on_phase=on_phase, dtw_criterion=softDTW, tr_i=i, epoch=epoch)
+				avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_l1 = validate(model, vd_loader, beta, transform=transform, transform_constructor=stft if transform=='fourier' else None, on_phase=on_phase, l1_criterion=l1wavLoss, tr_i=i, epoch=epoch, phase_type=phase_type)
 				
 				vd_loss.append(avg_valid_loss) 
 				vd_loss_cover.append(avg_valid_loss_cover) 
@@ -333,7 +341,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 				vd_snr.append(avg_valid_snr) 
 				vd_psnr.append(avg_valid_psnr)
 				vd_ssim.append(avg_valid_ssim) 
-				vd_dtw.append(avg_valid_dtw)
+				vd_l1.append(avg_valid_l1)
 
 				is_best = bool(avg_valid_loss < best_loss)
 				# Save checkpoint if is a new best
@@ -350,14 +358,14 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 					'tr_snr': snr,
 					'tr_psnr': psnr,
 					'tr_ssim': ssim_secret,
-					'tr_dtw': train_dtw_loss,
+					'tr_l1': train_l1_loss,
 					'vd_loss': vd_loss,
 					'vd_cover_loss': vd_loss_cover,
 					'vd_loss_secret': vd_loss_secret,
 					'vd_snr': vd_snr,
 					'vd_psnr': vd_psnr,
 					'vd_ssim': vd_ssim,
-					'vd_dtw': vd_dtw,
+					'vd_l1': vd_l1,
 				}, is_best=is_best, filename=os.path.join(os.environ.get('OUT_PATH'), f'models/checkpoint_run_{experiment}.pt'))
 		
 		print(
@@ -369,7 +377,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			Average SNR: {avg_snr}, \
 			Average PSNR: {avg_psnr},\
 			Average SSIM: {avg_ssim}, \
-			Average DTW: {avg_dtw_loss}'
+			Average L1: {avg_l1_loss}'
 		)
 
 		# Log train average loss to wandb
@@ -396,7 +404,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 	torch.save(model.state_dict(), os.path.join(os.environ.get('OUT_PATH'), f'models/final_run_{experiment}.pt'))
 	return model, avg_train_loss
 
-def validate(model, vd_loader, beta, transform='cosine', transform_constructor=None, on_phase=False, dtw_criterion=None, epoch=None, tr_i=None, verbose=False):
+def validate(model, vd_loader, beta, transform='cosine', transform_constructor=None, on_phase=False, l1_criterion=None, epoch=None, tr_i=None, verbose=False, phase_type=None):
 
 	# Set device
 	device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -404,8 +412,8 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 	
 	# Parallelize on GPU
 	if torch.cuda.device_count() > 1:
-  		print("Let's use", torch.cuda.device_count(), "GPUs!")
-  		model = nn.DataParallel(model)
+		  print("Let's use", torch.cuda.device_count(), "GPUs!")
+		  model = nn.DataParallel(model)
 
 	model.to(device)
 
@@ -413,7 +421,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 	model.eval()
 	loss = 0
 
-	valid_loss, valid_loss_cover, valid_loss_secret, valid_loss_spectrum, valid_snr, valid_psnr, valid_ssim, valid_dtw = [], [], [], [], [], [], [], []
+	valid_loss, valid_loss_cover, valid_loss_secret, valid_loss_spectrum, valid_snr, valid_psnr, valid_ssim, valid_l1 = [], [], [], [], [], [], [], []
 	vd_datalen = len(vd_loader)
 
 	# Start validating ...
@@ -428,7 +436,10 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 			covers = covers.unsqueeze(1) if transform == 'cosine' else covers
 
 			if (transform == 'fourier') and (on_phase):
-				containers, revealed = model(secrets, phase)
+				if phase_type is None:
+					containers, revealed = model(secrets, phase)
+				else:
+					containers, revealed = model(secrets, covers, phase)
 			else: containers, revealed = model(secrets, covers)
 
 			if i == 0:
@@ -439,8 +450,8 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 				wandb.log({f"Revelation at epoch {epoch}, vd iteration {tr_i}": fig})
 
 			if transform == 'cosine':
-				container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
-				container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
+				container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=1024, frame_step=130, window=torch.hamming_window)
+				container_2x = sdct_torch(container_wav, frame_length=1024, frame_step=130, window=torch.hamming_window).unsqueeze(0).unsqueeze(0)
 				loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 			elif transform == 'fourier':
 				if on_phase:
@@ -463,13 +474,12 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 			vd_psnr_image = PSNR(secrets, revealed)
 			ssim_image = ssim(secrets, revealed)
 
-			if dtw_criterion is not None:
+			if l1_criterion is not None:
 				if transform == 'cosine':
-					original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62, window=torch.hamming_window)
+					original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=1024, frame_step=130, window=torch.hamming_window)
 				elif transform == 'fourier':
 					original_wav = transform_constructor.inverse(covers.squeeze(1), phase.squeeze(1))
-				dtw_loss = dtw_criterion(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
-				if transform == 'fourier': dtw_loss = dtw_loss[0]
+				l1_loss = l1_criterion(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
 
 			valid_loss.append(loss.detach().item())
 			valid_loss_cover.append(loss_cover.detach().item())
@@ -478,7 +488,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 			valid_snr.append(vd_snr_audio)
 			valid_psnr.append(vd_psnr_image.detach().item())
 			valid_ssim.append(ssim_image.detach().item())
-			valid_dtw.append(dtw_loss.detach().item())
+			valid_l1.append(l1_loss.detach().item())
 
 			print(
 				f'(#{i})[{np.round(time.time()-iniv,2)}s]\
@@ -489,7 +499,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 				SNR {vd_snr_audio},\
 				PSNR {vd_psnr_image.detach().item()},\
 				SSIM {ssim_image.detach().item()},\
-				DTW {dtw_loss.detach().item()}'
+				L1 {l1_loss.detach().item()}'
 			)
 
 			if i >= 500: break
@@ -502,7 +512,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 		avg_valid_snr = np.mean(valid_snr)
 		avg_valid_psnr = np.mean(valid_psnr)
 		avg_valid_ssim = np.mean(valid_ssim)
-		avg_valid_dtw = np.mean(valid_dtw)
+		avg_valid_l1 = np.mean(valid_l1)
 
 		wandb.log({
 			'vd_loss': avg_valid_loss,
@@ -512,7 +522,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 			'vd_SNR': avg_valid_snr,
 			'vd_PSNR': avg_valid_psnr,
 			'vd_SSIM': avg_valid_ssim,
-			'vd_DTW': avg_valid_dtw
+			'vd_L1': avg_valid_l1
 		})
 		print(f"Validation took {time.time() - iniv} seconds")
 
@@ -523,16 +533,22 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 	del valid_snr
 	del valid_psnr
 	del valid_ssim
-	del valid_dtw
+	del valid_l1
 	gc.collect()
 
-	return avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw
+	return avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_l1
 			
 
 if __name__ == '__main__':
 
 	args = parser.parse_args()
 	print(args)
+
+	if args.phase_type == 'None': args.phase_type = None
+
+	assert not(args.transform != 'fourier' and args.on_phase), 'on_phase only applies to transform=fourier'
+	assert not(not args.on_phase and args.phase_type is not None), 'phase_type must be None if not using phase'
+	assert args.phase_type is None or args.phase_type == 'mean' or args.phase_type == '2D' or args.phase_type == '3D' or args.phase_type == 'RN', 'Invalid value for phase_type'
 
 	train_loader = loader(
 		set='train', 
@@ -550,7 +566,8 @@ if __name__ == '__main__':
 		transform=args.transform,
 		add_noise=args.add_noise, 
 		noise_kind=args.noise_kind, 
-		noise_amplitude=args.noise_amplitude
+		noise_amplitude=args.noise_amplitude,
+		phase_type=args.phase_type
 	)
 
 	if args.from_checkpoint:
@@ -566,15 +583,16 @@ if __name__ == '__main__':
 		vd_loader=test_loader, 
 		beta=args.beta, 
 		lr=args.lr, 
-		epochs=8, 
+		epochs=4,
 		slide=15,
 		prev_epoch=checkpoint['epoch'] if args.from_checkpoint else None,  
 		prev_i=checkpoint['i'] if args.from_checkpoint else None,
 		summary=args.summary,
 		experiment=args.experiment,
-		add_dtw_term=args.add_dtw_term,
+		add_l1_term=args.add_l1_term,
 		transform=args.transform,
-		on_phase=args.on_phase
+		on_phase=args.on_phase,
+		phase_type=args.phase_type
 	)
 
 
