@@ -64,8 +64,8 @@ class AudioProcessor():
     def __init__(self, transform):
         # Corresponds to 1.5 seconds approximately
         self._limit = 67522 # 2 ** 16 + 2 ** 11 - 2 ** 6 + 2
-        self._frame_length = 2 ** 12 if transform == 'cosine' else 2 ** 11 - 1
-        self._frame_step = 2 ** 6 - 2 if transform == 'cosine' else 132
+        self._frame_length = 2 ** 10 if transform == 'cosine' else 2 ** 11 - 1
+        self._frame_step = 2 ** 7 + 2 if transform == 'cosine' else 132
 
         self._transform = transform
         if self._transform == 'fourier':
