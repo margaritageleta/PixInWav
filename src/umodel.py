@@ -73,7 +73,7 @@ class Down(nn.Module):
 
 class Up(nn.Module):
 
-    def __init__(self, in_channels, out_channels, mid_channels=None, image_alone = False):
+    def __init__(self, in_channels, out_channels, mid_channels=None, image_alone = False, magphase = False):
         super().__init__()
         self.image_alone = image_alone
         if not mid_channels:
@@ -84,7 +84,10 @@ class Up(nn.Module):
             nn.ConvTranspose2d(mid_channels , out_channels, kernel_size=3, stride=2, output_padding=1),
             nn.LeakyReLU(0.8, inplace=True),
         )
-        self.conv = DoubleConv(out_channels * 2 if self.image_alone else out_channels * 3, out_channels, mid_channels)
+        convinput = out_channels * 2 if self.image_alone else out_channels * 3
+        if magphase: convinput = 3
+
+        self.conv = DoubleConv(convinput, out_channels, mid_channels)
 
     def forward(self, mix, im_opposite, au_opposite = None):
         mix = self.up(mix)
@@ -135,7 +138,7 @@ class PrepHidingNet(nn.Module):
         im = self.pixel_shuffle(im)
 
         if self._transform == 'cosine':
-            im_enc = [nn.Upsample(scale_factor=(8, 2), mode='bilinear', align_corners=True)(im)]
+            im_enc = [nn.Upsample(scale_factor=(2, 1), mode='bilinear', align_corners=True)(im)]
         elif self._transform == 'fourier':
             im_enc = [nn.Upsample(scale_factor=(2, 1), mode='bilinear', align_corners=True)(im)]
         else: raise Exception(f'Transform not implemented')
@@ -167,39 +170,97 @@ class PrepHidingNet(nn.Module):
         
 
 class RevealNet(nn.Module):
-    def __init__(self):
+    def __init__(self, phase_type=None):
         super(RevealNet, self).__init__()
 
+        self.phase_type=phase_type
         self.pixel_unshuffle = PixelUnshuffle(2)
 
-        self.im_encoder_layers = nn.ModuleList([
-            Down(1, 64),
-            Down(64, 64 * 2)
-        ])
+        # If phase_type == RN, modify RevealNet to accept 2 channels as input instead of 1
+        if phase_type != 'RN':
+            self.im_encoder_layers = nn.ModuleList([
+                Down(1, 64),
+                Down(64, 64 * 2)
+            ])
+        else:
+            self.im_encoder_layers = nn.ModuleList([
+                Down(2, 64),
+                Down(64, 64 * 2)
+            ])
 
-        self.im_decoder_layers = nn.ModuleList([
-            Up(64 * 2, 64, image_alone=True),
-            Up(64, 1, image_alone=True)
-        ])
+        if phase_type != 'RN':
+            self.im_decoder_layers = nn.ModuleList([
+                Up(64 * 2, 64, image_alone=True),
+                Up(64, 1, image_alone=True)
+            ])
+        else:        
+            self.im_decoder_layers = nn.ModuleList([
+                Up(64 * 2, 64, image_alone=True),
+                Up(64, 1, image_alone=True, magphase=True)
+            ])
 
-    def forward(self, ct):
+        # If phase_type == '2D' or '3D', create the conv kernel to merge afterwards
+        if phase_type == '2D':
+            self.mag_phase_join = nn.Conv2d(6,3,1)
+        elif phase_type == '3D':
+            self.mag_phase_join = nn.Conv3d(2,1,1)
+
+    def forward(self, ct, ct_phase=None):
+
+        # ct is not None if and only if phase_type != None
+        # If using the phase only, 'ct' is the phase, else the magnitude
+        assert not (self.phase_type is None and ct_phase is not None)
+        assert not (self.phase_type is not None and ct_phase is None)
+
         im_enc = [F.interpolate(ct, size=(256 * 2, 256 * 2))]
+        if ct_phase is not None:
+            im_enc_phase = [F.interpolate(ct_phase, size=(256 * 2, 256 * 2))]
+
+        if self.phase_type == 'RN':
+            # Concatenate mag and phase containers to input to RevealNet
+            im_enc = [torch.cat((im_enc[0], im_enc_phase[0]), 1)]
 
         for enc_layer_idx, enc_layer in enumerate(self.im_encoder_layers):
             im_enc.append(enc_layer(im_enc[-1]))
+            if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
+                im_enc_phase.append(enc_layer(im_enc_phase[-1]))
+
         
         im_dec = [im_enc.pop(-1)]
+        if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
+            im_dec_phase = [im_enc_phase.pop(-1)]
 
         for dec_layer_idx, dec_layer in enumerate(self.im_decoder_layers):
             im_dec.append(
                 dec_layer(im_dec[-1], 
                 im_enc[-1 - dec_layer_idx])
             )
+            if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
+                im_dec_phase.append(
+                    dec_layer(im_dec_phase[-1], 
+                    im_enc_phase[-1 - dec_layer_idx])
+                )
         
         # Pixel Unshuffle and delete 4th component
         revealed = torch.narrow(self.pixel_unshuffle(im_dec[-1]), 1, 0, 3)
 
-        return revealed
+        if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
+            # Postprocess phase
+            revealed_phase = torch.narrow(self.pixel_unshuffle(im_dec_phase[-1]), 1, 0, 3)
+
+            # Join with magnitude
+            if self.phase_type == 'mean':
+                return revealed.add(revealed_phase)*0.5
+            elif self.phase_type == '2D':
+                join = torch.cat((revealed,revealed_phase),1)
+                return self.mag_phase_join(join)
+            elif self.phase_type == '3D':
+                revealed = revealed.unsqueeze(0)
+                revealed_phase = revealed_phase.unsqueeze(0)
+                join = torch.cat((revealed,revealed_phase),1)
+                return self.mag_phase_join(join).squeeze(1)
+        else:
+            return revealed
 
 
 class StegoUNet(nn.Module):
@@ -212,7 +273,8 @@ class StegoUNet(nn.Module):
         frame_length=4096, 
         frame_step=62,
         switch=False,
-        architecture='resindep'
+        architecture='resindep',
+        phase_type=None
     ):
         super().__init__()
         # Architecture type
@@ -220,7 +282,7 @@ class StegoUNet(nn.Module):
 
         # Sub-networks
         self.PHN = PrepHidingNet(self._architecture, transform)
-        self.RN = RevealNet()
+        self.RN = RevealNet(phase_type)
 
         # STDCT parameters
         self.frame_length = frame_length
@@ -232,7 +294,16 @@ class StegoUNet(nn.Module):
         self.noise_kind = noise_kind
         self.noise_amplitude = noise_amplitude
 
-    def forward(self, secret, cover):
+        # Phase parameters
+        self.phase_type=phase_type # phase_type != None implies not on_phase
+
+    def forward(self, secret, cover, cover_phase=None):
+
+        # cover_phase is not None if and only if phase_type != None
+        # If using the phase only, 'cover' is actually the phase!
+        assert not (self.phase_type is None and cover_phase is not None)
+        assert not (self.phase_type is not None and cover_phase is None)
+
         # Create a new channel with 0 (R,G,B) -> (R,G,B,0)
         zero = torch.zeros(1, 1, 256, 256).type(torch.float32).cuda()
         secret = torch.cat((secret,zero),1)
@@ -244,6 +315,8 @@ class StegoUNet(nn.Module):
 
         # Residual connection
         container = cover + hidden_signal if (self._architecture != 'plaindep') else hidden_signal
+        if cover_phase is not None:
+            container_phase = cover_phase + hidden_signal if (self._architecture != 'plaindep') else hidden_signal
 
         if (self.add_noise) and (self.noise_kind is not None) and (self.noise_amplitude is not None):
             # Switch domain
@@ -286,6 +359,9 @@ class StegoUNet(nn.Module):
                 ).unsqueeze(0).unsqueeze(0)
 
             # Reveal image
-            revealed = self.RN(container)
+            if cover_phase is not None:
+                revealed = self.RN(container, container_phase)
+            else:
+                revealed = self.RN(container)
 
         return container, revealed
