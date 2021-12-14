@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import os
 import gc
 import time
@@ -6,7 +8,7 @@ import wandb
 import argparse
 import numpy as np
 import torch.nn as nn
-from loader import loader
+from loader_fastt import loader
 import torch.optim as optim
 from umodel import StegoUNet
 import torch.nn.functional as F
@@ -15,7 +17,6 @@ from torch_stft import STFT
 from pystct import sdct_torch, isdct_torch
 from losses import ssim, SNR, PSNR, StegoLoss
 from pydtw import SoftDTW
-from torch.profiler import profile, record_function, ProfilerActivity
 
 MY_FOLDER = '/mnt/gpid07/imatge/teresa.domenech/venv/PixInWav/'
 
@@ -237,191 +238,181 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
         train_loss, train_loss_cover, train_loss_secret, train_loss_spectrum, snr, psnr, ssim_secret, train_dtw_loss = [], [], [], [], [], [], [], []
         vd_loss, vd_loss_cover, vd_loss_secret, vd_snr, vd_psnr, vd_ssim, vd_dtw = [], [], [], [], [], [], []
 
-        with torch.profiler.profile(
-                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                schedule=torch.profiler.schedule(wait=10, warmup=5, active=3, repeat=30),
-                on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./log/StegoUnet_{experiment}'),
-                record_shapes=True,
-                profile_memory=True,
-                with_stack=True
-        ) as prof:
-            for i, data in enumerate(tr_loader):
-                #if i>50: break
-                if prev_i != None and i < prev_i - 1: continue  # Checkpoint pass
+        for i, data in enumerate(tr_loader):
+            if prev_i != None and i < prev_i - 1: continue  # Checkpoint pass
 
-                secrets, covers = data[0].to(device), data[1].to(device)
-                if transform == 'fourier': phase = data[2].to(device)
-                secrets = secrets.permute(0, 3, 1, 2).type(torch.cuda.FloatTensor)
-                covers = covers.unsqueeze(1) if transform == 'cosine' else covers
+            secrets, covers = data[0].to(device), data[1].to(device)
+            if transform == 'fourier': phase = data[2].to(device)
+            secrets = secrets.permute(0, 3, 1, 2).type(torch.cuda.FloatTensor)
+            covers = covers.unsqueeze(1) if transform == 'cosine' else covers
 
-                optimizer.zero_grad()
+            optimizer.zero_grad()
 
-                if (transform == 'fourier') and (on_phase):
-                    containers, revealed = model(secrets, phase)
+            if (transform == 'fourier') and (on_phase):
+                containers, revealed = model(secrets, phase)
+            else:
+                containers, revealed = model(secrets, covers)
+
+            if transform == 'cosine':
+                original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62,
+                                           window=torch.hamming_window).to(device)
+                container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62,
+                                            window=torch.hamming_window).to(device)
+                container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62,
+                                          window=torch.hamming_window).unsqueeze(0).unsqueeze(0).to(device)
+                loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x,
+                                                                         revealed, beta)
+
+            elif transform == 'fourier':
+                if on_phase:
+                    original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
+                    container_wav = stft.inverse(covers.squeeze(1), containers.squeeze(1))
+                    container_2x = stft.transform(container_wav)[1].unsqueeze(0)
+                    loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x,
+                                                                             revealed, beta)
                 else:
-                    containers, revealed = model(secrets, covers)
-
-                if transform == 'cosine':
-                    original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62,
-                                               window=torch.hamming_window).to(device)
-                    container_wav = isdct_torch(containers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62,
-                                                window=torch.hamming_window).to(device)
-                    container_2x = sdct_torch(container_wav, frame_length=4096, frame_step=62,
-                                              window=torch.hamming_window).unsqueeze(0).unsqueeze(0).to(device)
+                    original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
+                    container_wav = stft.inverse(containers.squeeze(1), phase.squeeze(1))
+                    container_2x = stft.transform(container_wav)[0].unsqueeze(0)
                     loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x,
                                                                              revealed, beta)
 
-                elif transform == 'fourier':
-                    if on_phase:
-                        original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
-                        container_wav = stft.inverse(covers.squeeze(1), containers.squeeze(1))
-                        container_2x = stft.transform(container_wav)[1].unsqueeze(0)
-                        loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x,
-                                                                                 revealed, beta)
-                    else:
-                        original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
-                        container_wav = stft.inverse(containers.squeeze(1), phase.squeeze(1))
-                        container_2x = stft.transform(container_wav)[0].unsqueeze(0)
-                        loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x,
-                                                                                 revealed, beta)
+            snr_audio = SNR(
+                covers,
+                containers,
+                phase=None if transform == 'cosine' else phase,
+                transform=transform,
+                transform_constructor=None if transform == 'cosine' else stft,
+                on_phase=on_phase
+            )
 
-                snr_audio = SNR(
-                    covers,
-                    containers,
-                    phase=None if transform == 'cosine' else phase,
-                    transform=transform,
-                    transform_constructor=None if transform == 'cosine' else stft,
-                    on_phase=on_phase
-                )
+            psnr_image = PSNR(secrets, revealed)
+            ssim_image = ssim(secrets, revealed)
+            dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
+            if transform == 'fourier': dtw_loss = dtw_loss[0]
+            objective_loss = loss
+            if add_dtw_term: objective_loss += 10 ** (np.floor(np.log10(1 / 33791)) + 1) * dtw_loss
+            with torch.autograd.set_detect_anomaly(True):
+                objective_loss.backward()
+            optimizer.step()
 
-                psnr_image = PSNR(secrets, revealed)
-                ssim_image = ssim(secrets, revealed)
-                dtw_loss = softDTW(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
-                if transform == 'fourier': dtw_loss = dtw_loss[0]
-                objective_loss = loss
-                if add_dtw_term: objective_loss += 10 ** (np.floor(np.log10(1 / 33791)) + 1) * dtw_loss
-                with torch.autograd.set_detect_anomaly(True):
-                    objective_loss.backward()
-                optimizer.step()
-                prof.step()
+            train_loss.append(loss.detach().item())
+            train_loss_cover.append(loss_cover.detach().item())
+            train_loss_secret.append(loss_secret.detach().item())
+            train_loss_spectrum.append(loss_spectrum.detach().item())
+            snr.append(snr_audio)
+            psnr.append(psnr_image.detach().item())
+            ssim_secret.append(ssim_image.detach().item())
+            train_dtw_loss.append(dtw_loss.detach().item())
 
-                train_loss.append(loss.detach().item())
-                train_loss_cover.append(loss_cover.detach().item())
-                train_loss_secret.append(loss_secret.detach().item())
-                train_loss_spectrum.append(loss_spectrum.detach().item())
-                snr.append(snr_audio)
-                psnr.append(psnr_image.detach().item())
-                ssim_secret.append(ssim_image.detach().item())
-                train_dtw_loss.append(dtw_loss.detach().item())
-
-                avg_train_loss = np.mean(train_loss[-slide:])
-                avg_train_loss_cover = np.mean(train_loss_cover[-slide:])
-                avg_train_loss_secret = np.mean(train_loss_secret[-slide:])
-                avg_train_loss_spectrum = np.mean(train_loss_spectrum[-slide:])
-                avg_snr = np.mean(snr[-slide:])
-                avg_ssim = np.mean(ssim_secret[-slide:])
-                avg_psnr = np.mean(psnr[-slide:])
-                avg_dtw_loss = np.mean(train_dtw_loss[-slide:])
-
-                print(
-                    f'(#{i})[{np.round(time.time() - ini, 2)}s]\
-                    Train Loss {loss.detach().item()},\
-                    MSE audio {loss_cover.detach().item()},\
-                    MSE image {loss_secret.detach().item()},\
-                    MSE spectrum {loss_spectrum.detach().item()},\
-                    SNR {snr_audio},\
-                    PSNR {psnr_image.detach().item()},\
-                    SSIM {ssim_image.detach().item()},\
-                    DTW {dtw_loss.detach().item()}'
-                )
-
-                # Log train average loss to wandb
-                wandb.log({
-                    'tr_i_loss': avg_train_loss,
-                    'tr_i_cover_loss': avg_train_loss_cover,
-                    'tr_i_secret_loss': avg_train_loss_secret,
-                    'tr_i_spectrum_loss': avg_train_loss_spectrum,
-                    'SNR': avg_snr,
-                    'PSNR': avg_psnr,
-                    'SSIM': avg_ssim,
-                    'DTW': avg_dtw_loss,
-                })
-
-                # Log images
-                if (i % 50 == 0) and (i != 0):
-                    avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(
-                        model, vd_loader, beta, transform=transform,
-                        transform_constructor=stft if transform == 'fourier' else None, on_phase=on_phase,
-                        dtw_criterion=softDTW, tr_i=i, epoch=epoch)
-
-                    vd_loss.append(avg_valid_loss)
-                    vd_loss_cover.append(avg_valid_loss_cover)
-                    vd_loss_secret.append(avg_valid_loss_secret)
-                    vd_snr.append(avg_valid_snr)
-                    vd_psnr.append(avg_valid_psnr)
-                    vd_ssim.append(avg_valid_ssim)
-                    vd_dtw.append(avg_valid_dtw)
-
-                    is_best = bool(avg_valid_loss < best_loss)
-                    # Save checkpoint if is a new best
-                    save_checkpoint({
-                        'epoch': epoch + 1,
-                        'state_dict': model.state_dict(),
-                        'best_loss': best_loss,
-                        'beta': beta,
-                        'lr': lr,
-                        'i': i + 1,
-                        'tr_loss': train_loss,
-                        'tr_cover_loss': train_loss_cover,
-                        'tr_loss_secret': train_loss_secret,
-                        'tr_snr': snr,
-                        'tr_psnr': psnr,
-                        'tr_ssim': ssim_secret,
-                        'tr_dtw': train_dtw_loss,
-                        'vd_loss': vd_loss,
-                        'vd_cover_loss': vd_loss_cover,
-                        'vd_loss_secret': vd_loss_secret,
-                        'vd_snr': vd_snr,
-                        'vd_psnr': vd_psnr,
-                        'vd_ssim': vd_ssim,
-                        'vd_dtw': vd_dtw,
-                    }, is_best=is_best, filename=os.path.join(MY_FOLDER, f'models/checkpoint_run_{experiment}.pt'))
-
+            avg_train_loss = np.mean(train_loss[-slide:])
+            avg_train_loss_cover = np.mean(train_loss_cover[-slide:])
+            avg_train_loss_secret = np.mean(train_loss_secret[-slide:])
+            avg_train_loss_spectrum = np.mean(train_loss_spectrum[-slide:])
+            avg_snr = np.mean(snr[-slide:])
+            avg_ssim = np.mean(ssim_secret[-slide:])
+            avg_psnr = np.mean(psnr[-slide:])
+            avg_dtw_loss = np.mean(train_dtw_loss[-slide:])
 
             print(
-                f'Epoch [{epoch + 1}/{epochs}], \
-                Average_loss: {avg_train_loss}, \
-                Average_loss_cover: {avg_train_loss_cover}, \
-                Average_loss_secret: {avg_train_loss_secret}, \
-                Average_loss_spectrum: {avg_train_loss_spectrum}, \
-                Average SNR: {avg_snr}, \
-                Average PSNR: {avg_psnr},\
-                Average SSIM: {avg_ssim}, \
-                Average DTW: {avg_dtw_loss}'
+                f'(#{i})[{np.round(time.time() - ini, 2)}s]\
+				Train Loss {loss.detach().item()},\
+				MSE audio {loss_cover.detach().item()},\
+				MSE image {loss_secret.detach().item()},\
+				MSE spectrum {loss_spectrum.detach().item()},\
+				SNR {snr_audio},\
+				PSNR {psnr_image.detach().item()},\
+				SSIM {ssim_image.detach().item()},\
+				DTW {dtw_loss.detach().item()}'
             )
 
             # Log train average loss to wandb
             wandb.log({
-                'tr_loss': avg_train_loss,
-                'tr_cover_loss': avg_train_loss_cover,
-                'tr_secret_loss': avg_train_loss_secret,
+                'tr_i_loss': avg_train_loss,
+                'tr_i_cover_loss': avg_train_loss_cover,
+                'tr_i_secret_loss': avg_train_loss_secret,
+                'tr_i_spectrum_loss': avg_train_loss_spectrum,
+                'SNR': avg_snr,
+                'PSNR': avg_psnr,
+                'SSIM': avg_ssim,
+                'DTW': avg_dtw_loss,
             })
 
-            is_best = bool(avg_train_loss < best_loss)
-            best_loss = min(avg_train_loss, best_loss)
+            # Log images
+            if (i % 50 == 0) and (i != 0):
+                avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(
+                    model, vd_loader, beta, transform=transform,
+                    transform_constructor=stft if transform == 'fourier' else None, on_phase=on_phase,
+                    dtw_criterion=softDTW, tr_i=i, epoch=epoch)
 
-            # Save checkpoint if is a new best
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'best_loss': best_loss,
-                'beta': beta,
-                'lr': lr,
-                'i': i + 1
-            }, is_best=is_best, filename=os.path.join(f'{MY_FOLDER}', f'models/checkpoint_run_{experiment}.pt'))
+                vd_loss.append(avg_valid_loss)
+                vd_loss_cover.append(avg_valid_loss_cover)
+                vd_loss_secret.append(avg_valid_loss_secret)
+                vd_snr.append(avg_valid_snr)
+                vd_psnr.append(avg_valid_psnr)
+                vd_ssim.append(avg_valid_ssim)
+                vd_dtw.append(avg_valid_dtw)
+
+                is_best = bool(avg_valid_loss < best_loss)
+                # Save checkpoint if is a new best
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'best_loss': best_loss,
+                    'beta': beta,
+                    'lr': lr,
+                    'i': i + 1,
+                    'tr_loss': train_loss,
+                    'tr_cover_loss': train_loss_cover,
+                    'tr_loss_secret': train_loss_secret,
+                    'tr_snr': snr,
+                    'tr_psnr': psnr,
+                    'tr_ssim': ssim_secret,
+                    'tr_dtw': train_dtw_loss,
+                    'vd_loss': vd_loss,
+                    'vd_cover_loss': vd_loss_cover,
+                    'vd_loss_secret': vd_loss_secret,
+                    'vd_snr': vd_snr,
+                    'vd_psnr': vd_psnr,
+                    'vd_ssim': vd_ssim,
+                    'vd_dtw': vd_dtw,
+                }, is_best=is_best, filename=os.path.join(MY_FOLDER, f'models/checkpoint_run_{experiment}.pt'))
+
+        print(
+            f'Epoch [{epoch + 1}/{epochs}], \
+			Average_loss: {avg_train_loss}, \
+			Average_loss_cover: {avg_train_loss_cover}, \
+			Average_loss_secret: {avg_train_loss_secret}, \
+			Average_loss_spectrum: {avg_train_loss_spectrum}, \
+			Average SNR: {avg_snr}, \
+			Average PSNR: {avg_psnr},\
+			Average SSIM: {avg_ssim}, \
+			Average DTW: {avg_dtw_loss}'
+        )
+
+        # Log train average loss to wandb
+        wandb.log({
+            'tr_loss': avg_train_loss,
+            'tr_cover_loss': avg_train_loss_cover,
+            'tr_secret_loss': avg_train_loss_secret,
+        })
+
+        is_best = bool(avg_train_loss < best_loss)
+        best_loss = min(avg_train_loss, best_loss)
+
+        # Save checkpoint if is a new best
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'best_loss': best_loss,
+            'beta': beta,
+            'lr': lr,
+            'i': i + 1
+        }, is_best=is_best, filename=os.path.join(f'{MY_FOLDER}', f'models/checkpoint_run_{experiment}.pt'))
 
     print(f"Training took {time.time() - ini} seconds")
-    #torch.save(model.state_dict(), os.path.join(f'{MY_FOLDER}', f'models/final_run_{experiment}.pt'))
+    # save_checpoint quan el carregues de un anterior per despres poder visualitzar dades
+    torch.save(model.state_dict(), os.path.join(f'{MY_FOLDER}', f'models/final_run_{experiment}.pt'))
     return model, avg_train_loss
 
 
@@ -477,13 +468,13 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
                                                                          revealed, beta)
             elif transform == 'fourier':
                 if on_phase:
-                    container_wav = transform_constructor.inverse(covers.squeeze(1), containers.squeeze(1))
-                    container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
+                    container_wav = transform_constructor.inverse(covers.squeeze(1), containers.squeeze(1)).to(device)
+                    container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0).to(device)
                     loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x,
                                                                              revealed, beta)
                 else:
-                    container_wav = transform_constructor.inverse(containers.squeeze(1), phase.squeeze(1))
-                    container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
+                    container_wav = transform_constructor.inverse(containers.squeeze(1), phase.squeeze(1)).to(device)
+                    container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0).to(device)
                     loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x,
                                                                              revealed, beta)
 
@@ -501,9 +492,9 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
             if dtw_criterion is not None:
                 if transform == 'cosine':
                     original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62,
-                                               window=torch.hamming_window)
+                                               window=torch.hamming_window).to(device)
                 elif transform == 'fourier':
-                    original_wav = transform_constructor.inverse(covers.squeeze(1), phase.squeeze(1))
+                    original_wav = transform_constructor.inverse(covers.squeeze(1), phase.squeeze(1)).to(device)
                 dtw_loss = dtw_criterion(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
                 if transform == 'fourier': dtw_loss = dtw_loss[0]
 
@@ -528,8 +519,8 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 				DTW {dtw_loss.detach().item()}'
             )
 
-            #if i >= 500: break
-            if i >= vd_datalen: break
+            if i >= 500: break
+        # if i >= vd_datalen: break
 
         avg_valid_loss = np.mean(valid_loss)
         avg_valid_loss_cover = np.mean(valid_loss_cover)
@@ -581,7 +572,7 @@ if __name__ == '__main__':
     )
 
     model = StegoUNet(
-        architecture=args.architecture,
+        # architecture=args.architecture,
         transform=args.transform,
         add_noise=args.add_noise,
         noise_kind=args.noise_kind,
@@ -590,10 +581,19 @@ if __name__ == '__main__':
 
     if args.from_checkpoint:
         # Load checkpoint
-        checkpoint = torch.load(os.path.join(MY_FOLDER, f'models/checkpoint_run_28.pt'),
+        checkpoint = torch.load(os.path.join(MY_FOLDER, f'models/final_run_46.pt'),
                                 map_location='cpu')
+        substring = 'module.'
+        checkpoint_tmp = OrderedDict()
+        chp_sd = checkpoint['state_dict']
+        for k in chp_sd:
+            new_k = k[len(substring):] if k.startswith(substring) else k
+            checkpoint_tmp[new_k] = chp_sd[k]
+        checkpoint['state_dict'] = checkpoint_tmp
+        print('Workaround loader')
         model = nn.DataParallel(model)
         model.load_state_dict(checkpoint['state_dict'])
+        print('Loaded')
         print('Checkpoint loaded ++')
 
     train(
@@ -602,7 +602,7 @@ if __name__ == '__main__':
         vd_loader=test_loader,
         beta=args.beta,
         lr=args.lr,
-        epochs=1,
+        epochs=8,
         slide=15,
         prev_epoch=checkpoint['epoch'] if args.from_checkpoint else None,
         prev_i=checkpoint['i'] if args.from_checkpoint else None,

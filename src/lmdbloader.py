@@ -5,9 +5,9 @@ import numpy as np
 import lmdb
 from loader import StegoDataset
 
-MY_FOLDER = '/mnt/gpid07/imatge/margarita.geleta/pix2wav'
+MY_FOLDER = '/mnt/gpid07/imatge/teresa.domenech/venv/PixInWav'
 DATA_FOLDER = '/projects/deep_learning/ILSVRC/ILSVRC2012'
-AUDIO_FOLDER = f'{MY_FOLDER}/data/FSDnoisy18k.audio_'
+AUDIO_FOLDER = '/mnt/gpid08/users/teresa.domenech'
 
 def make_lmdb(dataset, save_dir=f'{MY_FOLDER}/data', num_workers=4):
     loader = DataLoader(dataset, num_workers=num_workers, collate_fn=lambda x: x[0])

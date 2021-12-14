@@ -14,17 +14,18 @@ from torch_stft import STFT
 import matplotlib.pyplot as plt
 
 MY_FOLDER = '/mnt/gpid07/imatge/teresa.domenech/venv/PixInWav'
-DATA_FOLDER = '/mnt/gpid08/datasets/coco-2017/coco/images'
-AUDIO_FOLDER ='/mnt/gpid08/users/teresa.domenech'
+DATA_FOLDER = '/mnt/gpid08/datasets/ILSVRC/ILSVRC2012'
+AUDIO_FOLDER ='/mnt/gpid07/imatge/cristina.punti/PixInWav/data/FSDnoisy18k.audio_'
+#DATA_FOLDER = '/mnt/gpid08/datasets/coco-2017/coco/images'
+#AUDIO_FOLDER_train = '/mnt/gpid08/users/teresa.domenech/train'
+#AUDIO_FOLDER_val = '/mnt/gpid07/imatge/teresa.domenech/venv/PixInWav/PixInWav_dataset/val'
 MY_DATA_FOLDER = f'{MY_FOLDER}/notebooks'
 fiAudio = False
-
 
 class ImageProcessor():
     """
     Function to preprocess the images from the custom
     dataset. It includes a series of transformations:
-
     - At __init__ we convert the image to the desired [colorspace].
     - Crop function crops the image to the desired [proportion].
     - Scale scales the images to desired size [n]x[n].
@@ -106,6 +107,7 @@ class AudioProcessor():
         else:
             raise Exception(f'Transform not implemented')
 
+
 class StegoDataset(torch.utils.data.Dataset):
     """
     Custom datasets pairing images with spectrograms.
@@ -130,21 +132,18 @@ class StegoDataset(torch.utils.data.Dataset):
             image_root: str,
             audio_root: str,
             folder: str,
-            #mappings: dict,
+            mappings: dict,
             rgb: bool = True,
             transform: str = 'cosine',
-            image_extension: str = "jpg",
+            image_extension: str = "JPEG",
             audio_extension: str = "wav"
     ):
-        device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._image_data_path = pathlib.Path(image_root) / folder
-        if folder == 'train2017':
-            self._audio_data_path = pathlib.Path(audio_root) / 'train'
-        else:
-            self._audio_data_path = pathlib.Path(audio_root) / 'val'
 
-        self._MAX_LIMIT = 10000 if folder == 'train2017' else 900
-        self._MAX_AUDIO_LIMIT = 5224 if folder == 'train2017' else 946
+        # self._image_data_path = pathlib.Path(image_root) / folder
+        self._image_data_path = pathlib.Path(image_root) / 'train'
+        self._audio_data_path = pathlib.Path(f'{audio_root}{folder}')
+        self._MAX_LIMIT = 10000 if folder == 'train' else 900
+        self._MAX_AUDIO_LIMIT = 17584 if folder == 'train' else 946
         self._colorspace = 'RGB' if rgb else 'L'
         self._transform = transform
 
@@ -153,37 +152,42 @@ class StegoDataset(torch.utils.data.Dataset):
 
         self.image_extension = image_extension
         self.audio_extension = audio_extension
+        self._index = 0
+        self._indices = []
         self._audios = []
-        self._images = []
 
-        _aux_index_i = 0
-        for image_path in glob.glob(f'{self._image_data_path}/*.{self.image_extension}'):
-            self._images.append(image_path)
-            _aux_index_i += 1
-            if _aux_index_i == self._MAX_LIMIT: break
-        self._images = self._images
-        random.shuffle(self._images)
+        test_i = 0
+        for key in mappings.keys():
+            for img in glob.glob(f'{self._image_data_path}/{key}/*.{self.image_extension}'):
+                test_i += 1
+                if folder == 'train' or (folder == 'test' and test_i > self._MAX_LIMIT):
+                    self._indices.append((key, re.search(r'(?<=_)\d+', img).group()))
+                    self._index += 1
+                if self._index == self._MAX_LIMIT:
+                    break
+            if self._index == self._MAX_LIMIT:
+                break
 
         _aux_index = 0
         for audio_path in glob.glob(f'{self._audio_data_path}/*.{self.audio_extension}'):
             self._audios.append(audio_path)
             _aux_index += 1
             if _aux_index == self._MAX_AUDIO_LIMIT: break
-        self._audios = self._audios
         random.shuffle(self._audios)
+
         self._AUDIO_PROCESSOR = AudioProcessor(transform=self._transform)
 
         print('Set up done')
 
     def __len__(self):
-        return self._MAX_LIMIT
+        return self._index
 
-    def __getitem__(self,index):
+    def __getitem__(self, index):
+        key = self._indices[index][0]
+        indexer = self._indices[index][1]
         rand_indexer = random.randint(0, self._MAX_AUDIO_LIMIT - 1)
-        #rand_indexer_i = random.randint(0, self._MAX_LIMIT - 1)
 
-        # per la imatge s'hauria de fer servir index
-        img_path = self._images[index]
+        img_path = glob.glob(f'{self._image_data_path}/{key}/{key}_{indexer}.{self.image_extension}')[0]
         audio_path = self._audios[rand_indexer]
 
         img = np.asarray(ImageProcessor(image_path=img_path, colorspace=self._colorspace).forward()).astype('float64')
@@ -208,24 +212,22 @@ def loader(set='train', rgb=True, transform='cosine'):
     either [cosine] or [fourier].
     """
     print('Preparing dataset...')
-    '''
     mappings = {}
-    with open(f'{MY_DATA_FOLDER}/untitled.txt') as f:
+    with open(f'{MY_DATA_FOLDER}/mappings.txt') as f:
         for line in f:
             (key, i, img) = line.split()
             mappings[key] = img
-    '''
+
     dataset = StegoDataset(
         image_root=DATA_FOLDER,
         audio_root=AUDIO_FOLDER,
         folder=set,
-        #mappings=mappings,
+        mappings=mappings,
         rgb=rgb,
         transform=transform
     )
-    print(len(dataset), 'len datasets')
-    print('Dataset prepared.')
 
+    print('Dataset prepared.')
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=1,

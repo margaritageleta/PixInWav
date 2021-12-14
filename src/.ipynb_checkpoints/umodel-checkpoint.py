@@ -5,28 +5,6 @@ from torch import utils
 import torch.nn.functional as F
 from pystct import sdct_torch, isdct_torch
 from noises import add_noise
-import random
-from torch_stft import STFT
-
-def fix_permutation_idx(input):
-    idx = torch.randperm(input.nelement())
-    return idx
-
-def fix_permutation(input,idx):
-    input = input.reshape(-1)[idx].view(input.size())
-    return input
-
-
-def permutation(input):
-    #torch.manual_seed(0)
-    idx = torch.randperm(input.nelement())
-    input = input.reshape(-1)[idx].view(input.size())
-    return input, idx
-
-def unpermutation(input,idx):
-    idx_inv = torch.argsort(idx)
-    output = input.reshape(-1)[idx_inv].view(input.size())
-    return output
 
 def pixel_unshuffle(input, downscale_factor):
     '''
@@ -250,24 +228,11 @@ class StegoUNet(nn.Module):
         self.switch = switch if transform == 'cosine' else False
 
         # Noise parameters
-        self.add_noise = add_noise
+        self.add_noise = add_noise if transform == 'cosine' else False
         self.noise_kind = noise_kind
         self.noise_amplitude = noise_amplitude
 
-        #stft initialization
-        if transform == 'fourier':
-            self.stft = STFT(filter_length=2 ** 11 - 1,
-                        hop_length=132,
-                        win_length=2 ** 11 - 1,
-                        window='hann').cuda()
-            self.stft.num_samples = 67522
-        self.transform = transform
-
-        # permute parameters
-        print('inicialitzat')
-        self.i = 0
-
-    def forward(self, secret, cover, phase):
+    def forward(self, secret, cover):
         # Create a new channel with 0 (R,G,B) -> (R,G,B,0)
         zero = torch.zeros(1, 1, 256, 256).type(torch.float32).cuda()
         secret = torch.cat((secret,zero),1)
@@ -276,57 +241,29 @@ class StegoUNet(nn.Module):
             hidden_signal = self.PHN(secret, cover)
         else:
             hidden_signal = self.PHN(secret)
-        #if self.i==0:
-            #permute parameters
-            #print('fixat')
-            #self.idx_fix = fix_permutation_idx(hidden_signal)  # aixo nomes sha de fer una vegada
-
-       # self.i = self.i + 1
-        # using fix permutation
-       # hidden_signal = fix_permutation(hidden_signal,self.idx_fix)
-
-        # Hidden signal permutation
-        #hidden_signal, idx = permutation(hidden_signal)
 
         # Residual connection
         container = cover + hidden_signal if (self._architecture != 'plaindep') else hidden_signal
 
-        # inverse permutation
-        #container_rn = unpermutation(container, idx) #senyal que ha d'anar a la reveal network #recordar canviar l'idx
-
         if (self.add_noise) and (self.noise_kind is not None) and (self.noise_amplitude is not None):
-
-
-            if self.transform == 'cosine':
-                # Switch domain
-                container_wav =  isdct_torch(
-                    container.squeeze(0).squeeze(0),
-                    frame_length=self.frame_length,
-                    frame_step=self.frame_step,
-                    window=torch.hamming_window
-                )
-                # Generate spectral noise
-                noise = add_noise(
-                    container_wav,
-                    self.noise_kind[np.random.randint(0, len(self.noise_kind))],
-                    self.noise_amplitude[np.random.randint(0, len(self.noise_amplitude))]
-                ).type(torch.float32)
-                spectral_noise = sdct_torch(
-                    noise,
-                    frame_length=self.frame_length,
-                    frame_step=self.frame_step
-                ).unsqueeze(0).cuda()
-            else:
-                print('adding noise')
-                # Switch domain
-                container_wav = self.stft.inverse(container.squeeze(1).cuda(), phase.squeeze(1).cuda())
-                # Generate spectral noise
-                noise = add_noise(
-                        container_wav,
-                        self.noise_kind,
-                        self.noise_amplitude
-                ).type(torch.float32)
-                spectral_noise = self.stft.transform(noise)[0].unsqueeze(0).cuda()
+            # Switch domain
+            container_wav =  isdct_torch(
+                container.squeeze(0).squeeze(0), 
+                frame_length=self.frame_length, 
+                frame_step=self.frame_step, 
+                window=torch.hamming_window
+            )
+            # Generate spectral noise
+            noise = add_noise(
+                container_wav, 
+                self.noise_kind[np.random.randint(0, len(self.noise_kind))],
+                self.noise_amplitude[np.random.randint(0, len(self.noise_amplitude))]
+            ).type(torch.float32)
+            spectral_noise = sdct_torch(
+                noise, 
+                frame_length=self.frame_length, 
+                frame_step=self.frame_step
+            ).unsqueeze(0).cuda()
 
             # Add noise in frequency
             corrupted_container = container + spectral_noise
@@ -337,18 +274,18 @@ class StegoUNet(nn.Module):
             if self.switch:
                 # Switch domain and back
                 container_wav =  isdct_torch(
-                    container.squeeze(0).squeeze(0),
+                    container.squeeze(0).squeeze(0), 
                     frame_length=self.frame_length, 
                     frame_step=self.frame_step, 
                     window=torch.hamming_window
                 )
                 container = sdct_torch(
-                    container_wav,
+                    container_wav, 
                     frame_length=self.frame_length, 
                     frame_step=self.frame_step
                 ).unsqueeze(0).unsqueeze(0)
 
             # Reveal image
-            revealed = self.RN(container) #container_rn
+            revealed = self.RN(container)
 
         return container, revealed

@@ -63,9 +63,10 @@ def add_noise(audio, noise_kind, noise_amplitude=0.01):
     amplitude is converted to a probability with
     tanh activation function.
     """
-    if   noise_kind == 'gaussian': return audio + noise_amplitude * gaussian_noise(audio)    
-    elif noise_kind == 'speckle': return audio * (1 + noise_amplitude * gaussian_noise(audio))
-    elif noise_kind == 'salt': return salt_noise(audio, np.tanh(noise_amplitude))
-    elif noise_kind == 'pepper': return pepper_noise(audio, np.tanh(noise_amplitude))
-    elif noise_kind == 'salt&pepper': return salt_and_pepper_noise(audio, np.tanh(noise_amplitude))
+    print(noise_kind)
+    if   noise_kind[0] == 'gaussian': return audio + noise_amplitude[0] * gaussian_noise(audio)
+    elif noise_kind == 'speckle': return audio * (1 + noise_amplitude[0] * gaussian_noise(audio))
+    elif noise_kind == 'salt': return salt_noise(audio, np.tanh(noise_amplitude[0]))
+    elif noise_kind == 'pepper': return pepper_noise(audio, np.tanh(noise_amplitude[0]))
+    elif noise_kind == 'salt&pepper': return salt_and_pepper_noise(audio, np.tanh(noise_amplitude[0]))
     else: raise Exception(f'Noise not implemented')

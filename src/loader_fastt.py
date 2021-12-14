@@ -78,33 +78,12 @@ class AudioProcessor():
                 hop_length=self._frame_step,
                 win_length=self._frame_length,
                 window='hann'
-            )
+            ).to(device)
 
     def forward(self, audio_path):
-        self.sound, self.sr = torchaudio.load(audio_path)
 
-        # Get the samples dimension
-        sound = self.sound[0]
-        # Create a temporary array
-        tmp = torch.zeros([self._limit, ]).normal_(mean=0, std=0.005)
-        # Cut the audio on limit
-        if sound.numel() < self._limit:
-            tmp[:sound.numel()] = sound[:]
-        else:
-            i = random.randint(0, len(sound) - self._limit)
-            tmp[:] = sound[i:i + self._limit]
-        if self._transform == 'cosine':
-            return sdct_torch(
-                tmp.type(torch.float32),
-                frame_length=self._frame_length,
-                frame_step=self._frame_step
-            )
-        elif self._transform == 'fourier':
-            magnitude, phase = self.stft.transform(tmp.unsqueeze(0).type(torch.float32))
-            return magnitude, phase
-
-        else:
-            raise Exception(f'Transform not implemented')
+        #self.sound, self.sr = torchaudio.load(torch.from_numpy(audio_path))
+        return None
 
 class StegoDataset(torch.utils.data.Dataset):
     """
@@ -143,8 +122,8 @@ class StegoDataset(torch.utils.data.Dataset):
         else:
             self._audio_data_path = pathlib.Path(audio_root) / 'val'
 
-        self._MAX_LIMIT = 10000 if folder == 'train2017' else 900
-        self._MAX_AUDIO_LIMIT = 5224 if folder == 'train2017' else 946
+        self._MAX_LIMIT = 10000 if folder == 'train2017' else 900 #10000 #900
+        self._MAX_AUDIO_LIMIT = 5224 if folder == 'train2017' else 900 #5224 #946
         self._colorspace = 'RGB' if rgb else 'L'
         self._transform = transform
 
@@ -154,6 +133,7 @@ class StegoDataset(torch.utils.data.Dataset):
         self.image_extension = image_extension
         self.audio_extension = audio_extension
         self._audios = []
+        self._audios_p = []
         self._images = []
 
         _aux_index_i = 0
@@ -164,14 +144,18 @@ class StegoDataset(torch.utils.data.Dataset):
         self._images = self._images
         random.shuffle(self._images)
 
-        _aux_index = 0
-        for audio_path in glob.glob(f'{self._audio_data_path}/*.{self.audio_extension}'):
-            self._audios.append(audio_path)
-            _aux_index += 1
-            if _aux_index == self._MAX_AUDIO_LIMIT: break
-        self._audios = self._audios
-        random.shuffle(self._audios)
-        self._AUDIO_PROCESSOR = AudioProcessor(transform=self._transform)
+
+        print('entra al else')
+        #self._audios = np.load('/mnt/gpid08/users/teresa.domenech/audio_cosine.npy').to(device)
+        if folder == 'train2017':
+            self._audios= np.load('/mnt/gpid08/users/teresa.domenech/audio_fourier_train.npy')
+            self._audios_p = np.load('/mnt/gpid08/users/teresa.domenech/audio_fourier_train_phase.npy')
+        else:
+            self._audios = np.load('/mnt/gpid08/users/teresa.domenech/audio_fourier_val.npy')
+            self._audios_p = np.load('/mnt/gpid08/users/teresa.domenech/audio_fourier_val_phase.npy')
+        print('load fet')
+        #random.shuffle(self._audios)
+        #self._AUDIO_PROCESSOR = AudioProcessor(transform=self._transform)
 
         print('Set up done')
 
@@ -184,15 +168,21 @@ class StegoDataset(torch.utils.data.Dataset):
 
         # per la imatge s'hauria de fer servir index
         img_path = self._images[index]
-        audio_path = self._audios[rand_indexer]
+        #audio_path = self._audios[rand_indexer]
+        audio_path_m = self._audios[rand_indexer]
+        audio_path_p = self._audios_p[rand_indexer]
 
         img = np.asarray(ImageProcessor(image_path=img_path, colorspace=self._colorspace).forward()).astype('float64')
 
         if self._transform == 'cosine':
-            sound_stct = self._AUDIO_PROCESSOR.forward(audio_path)
+            print('entra aqui')
+            sound_stct = torch.from_numpy(audio_path)
+            print('llegit')
             return (img, sound_stct)
         elif self._transform == 'fourier':
-            magnitude_stft, phase_stft = self._AUDIO_PROCESSOR.forward(audio_path)
+            magnitude_stft = torch.from_numpy(audio_path_m)
+            phase_stft = torch.from_numpy(audio_path_p)
+            #magnitude_stft, phase_stft = self._AUDIO_PROCESSOR.forward(audio_path)
             return (img, magnitude_stft, phase_stft)
         else:
             raise Exception(f'Transform not implemented')
@@ -225,14 +215,14 @@ def loader(set='train', rgb=True, transform='cosine'):
     )
     print(len(dataset), 'len datasets')
     print('Dataset prepared.')
-
+    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=1,
         shuffle=True,
         num_workers=4,
         pin_memory=True
-    )
+    )#.to(device)
 
     print('Data loaded ++')
     return dataloader
