@@ -1,4 +1,4 @@
-# PixInWav: Residual Steganography for Hiding Pixels in Audio
+# PixInWav: Residual Steganography for Hiding Pixels in Audio 111111
 
 This repository includes a python implemenation of `StegoUNet`, a deep neural network modelling an audio steganographic function. 
 
