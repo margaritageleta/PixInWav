@@ -9,6 +9,7 @@ from torch_stft import STFT
 
 folder = '/mnt/gpid08/users/teresa.domenech/train'
 
+#transform parameters
 limit = 67522  # 2 ** 16 + 2 ** 11 - 2 ** 6 + 2
 #frame_length = 2 ** 12
 #frame_step = 2 ** 6 - 2
@@ -40,10 +41,9 @@ def sdct_torch(signals, frame_length, frame_step, window=torch.hamming_window):
 if __name__ == '__main__':
     audios_mag = []
     audios_phase = []
-    j = 0
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
-    #fourier ini
+    #fourier initialization
     stft = STFT(
         filter_length=2 ** 11 - 1,
         hop_length=132,
@@ -53,7 +53,6 @@ if __name__ == '__main__':
     stft.num_samples = 67522
 
     for audio_path in glob.glob(f'{folder}/*.wav'):
-        if j > 10000: break
         sound, sr = torchaudio.load(audio_path)
         # Get the samples dimension
         sound = sound[0]
@@ -78,8 +77,6 @@ if __name__ == '__main__':
         audios_mag.append(magnitude.cpu().numpy())
         audios_phase.append(phase.cpu().numpy())
 
-        j = j + 1
-        print(j)
     # save array in .npy
     print('finalize')
     np.save('/mnt/gpid08/users/teresa.domenech/audio_fourier_train', audios_mag)

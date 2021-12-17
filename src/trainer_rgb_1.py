@@ -111,7 +111,18 @@ parser.add_argument('--architecture',
                     metavar='STR',
                     help='Architecture of StegoUNet: [resindep] [resdep] [resscale] [plaindep]'
                     )
-
+parser.add_argument('--permute',
+                    type=parse_keyword,
+                    default=False,
+                    metavar='BOOL',
+                    help='Boolean to add permutation'
+                    )
+parser.add_argument('--permute_type',
+                    type=str,
+                    default='DIFF',
+                    metavar='STR',
+                    help='Type of permute initialization: [DIFF] [FIX]'
+                    )
 
 # assert(True == False)
 
@@ -182,7 +193,7 @@ def viz2paper(s, r, cv, ct, log=True):
 
 
 def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev_i=None, summary=None, slide=50,
-          experiment=0, add_dtw_term=False, transform='cosine', on_phase=False):
+          experiment=0, add_dtw_term=False, transform='cosine', on_phase=False, add_noise = False):
     # Initialize wandb logs
     wandb.init(project='PixInWavRGB')
     if summary is not None:
@@ -250,8 +261,10 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
 
             if (transform == 'fourier') and (on_phase):
                 containers, revealed = model(secrets, phase)
-            else:
+            elif add_noise and transform == 'fourier':
                 containers, revealed = model(secrets, covers, phase)
+            else:
+                containers, revealed = model(secrets, covers, None)
 
             if transform == 'cosine':
                 original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62,
@@ -344,7 +357,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
                 avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(
                     model, vd_loader, beta, transform=transform,
                     transform_constructor=stft if transform == 'fourier' else None, on_phase=on_phase,
-                    dtw_criterion=softDTW, tr_i=i, epoch=epoch)
+                    dtw_criterion=softDTW, tr_i=i, epoch=epoch, add_noise=add_noise)
 
                 vd_loss.append(avg_valid_loss)
                 vd_loss_cover.append(avg_valid_loss_cover)
@@ -418,7 +431,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
 
 
 def validate(model, vd_loader, beta, transform='cosine', transform_constructor=None, on_phase=False, dtw_criterion=None,
-             epoch=None, tr_i=None, verbose=False):
+             epoch=None, tr_i=None, verbose=False, add_noise = False):
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f'Using device: {device}')
@@ -450,9 +463,10 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 
             if (transform == 'fourier') and (on_phase):
                 containers, revealed = model(secrets, phase)
-            else:
+            elif add_noise == True and transform == 'fourier':
                 containers, revealed = model(secrets, covers, phase)
-
+            else:
+                containers, revealed = model(secrets, covers, None)
             if i == 0:
                 if (transform == 'fourier') and (on_phase):
                     fig = viz2paper(secrets.cpu(), revealed.cpu(), phase.cpu(), containers.cpu())
@@ -578,7 +592,9 @@ if __name__ == '__main__':
         transform=args.transform,
         add_noise=args.add_noise,
         noise_kind=args.noise_kind,
-        noise_amplitude=args.noise_amplitude
+        noise_amplitude=args.noise_amplitude,
+        permute_type= args.permute_type,
+        permute=args.permute,
     )
     if args.from_checkpoint:
         # Load checkpoint
@@ -602,7 +618,8 @@ if __name__ == '__main__':
         experiment=args.experiment,
         add_dtw_term=args.add_dtw_term,
         transform=args.transform,
-        on_phase=args.on_phase
+        on_phase=args.on_phase,
+        add_noise=args.add_noise
     )
 
 '''

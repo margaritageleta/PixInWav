@@ -110,6 +110,18 @@ parser.add_argument('--architecture',
                     metavar='STR',
                     help='Architecture of StegoUNet: [resindep] [resdep] [resscale] [plaindep]'
                     )
+parser.add_argument('--permute',
+                    type=parse_keyword,
+                    default=False,
+                    metavar='BOOL',
+                    help='Boolean to add permutation'
+                    )
+parser.add_argument('--permute_type',
+                    type=str,
+                    default='DIFF',
+                    metavar='STR',
+                    help='Type of permute initialization: [DIFF] [FIX]'
+                    )
 
 
 # assert(True == False)
@@ -181,7 +193,7 @@ def viz2paper(s, r, cv, ct, log=True):
 
 
 def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev_i=None, summary=None, slide=50,
-          experiment=0, add_dtw_term=False, transform='cosine', on_phase=False):
+          experiment=0, add_dtw_term=False, transform='cosine', on_phase=False, add_noise = False):
     # Initialize wandb logs
     wandb.init(project='PixInWavRGB')
     if summary is not None:
@@ -248,8 +260,10 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
 
             if (transform == 'fourier') and (on_phase):
                 containers, revealed = model(secrets, phase)
+            elif add_noise == True and transform == 'fourier':
+                containers, revealed = model(secrets, covers, phase)
             else:
-                containers, revealed = model(secrets, covers)
+                containers, revealed = model(secrets, covers, None)
 
             if transform == 'cosine':
                 original_wav = isdct_torch(covers.squeeze(0).squeeze(0), frame_length=4096, frame_step=62,
@@ -311,7 +325,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
             avg_ssim = np.mean(ssim_secret[-slide:])
             avg_psnr = np.mean(psnr[-slide:])
             avg_dtw_loss = np.mean(train_dtw_loss[-slide:])
-
+            '''
             print(
                 f'(#{i})[{np.round(time.time() - ini, 2)}s]\
 				Train Loss {loss.detach().item()},\
@@ -323,7 +337,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
 				SSIM {ssim_image.detach().item()},\
 				DTW {dtw_loss.detach().item()}'
             )
-
+            '''
             # Log train average loss to wandb
             wandb.log({
                 'tr_i_loss': avg_train_loss,
@@ -341,7 +355,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
                 avg_valid_loss, avg_valid_loss_cover, avg_valid_loss_secret, avg_valid_snr, avg_valid_psnr, avg_valid_ssim, avg_valid_dtw = validate(
                     model, vd_loader, beta, transform=transform,
                     transform_constructor=stft if transform == 'fourier' else None, on_phase=on_phase,
-                    dtw_criterion=softDTW, tr_i=i, epoch=epoch)
+                    dtw_criterion=softDTW, tr_i=i, epoch=epoch, add_noise=add_noise)
 
                 vd_loss.append(avg_valid_loss)
                 vd_loss_cover.append(avg_valid_loss_cover)
@@ -415,7 +429,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch=None, prev
 
 
 def validate(model, vd_loader, beta, transform='cosine', transform_constructor=None, on_phase=False, dtw_criterion=None,
-             epoch=None, tr_i=None, verbose=False):
+             epoch=None, tr_i=None, verbose=False, add_noise = False):
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f'Using device: {device}')
@@ -447,8 +461,10 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 
             if (transform == 'fourier') and (on_phase):
                 containers, revealed = model(secrets, phase)
+            elif add_noise == True and transform == 'fourier':
+                containers, revealed = model(secrets, covers, phase)
             else:
-                containers, revealed = model(secrets, covers)
+                containers, revealed = model(secrets, covers, None)
 
             if i == 0:
                 if (transform == 'fourier') and (on_phase):
@@ -504,7 +520,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
             valid_psnr.append(vd_psnr_image.detach().item())
             valid_ssim.append(ssim_image.detach().item())
             valid_dtw.append(dtw_loss.detach().item())
-
+            '''
             print(
                 f'(#{i})[{np.round(time.time() - iniv, 2)}s]\
 				Valid Loss {loss.detach().item()},\
@@ -516,7 +532,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 				SSIM {ssim_image.detach().item()},\
 				DTW {dtw_loss.detach().item()}'
             )
-
+            '''
             if i >= 500: break
         # if i >= vd_datalen: break
 
@@ -571,11 +587,13 @@ if __name__ == '__main__':
     )
 
     model = StegoUNet(
-        # architecture=args.architecture,
+        architecture=args.architecture,
         transform=args.transform,
         add_noise=args.add_noise,
         noise_kind=args.noise_kind,
-        noise_amplitude=args.noise_amplitude
+        noise_amplitude=args.noise_amplitude,
+        permute_type = args.permute_type,
+        permute = args.permute,
     )
 
     if args.from_checkpoint:
@@ -592,7 +610,7 @@ if __name__ == '__main__':
         vd_loader=test_loader,
         beta=args.beta,
         lr=args.lr,
-        epochs=5,
+        epochs=3,
         slide=15,
         prev_epoch=checkpoint['epoch'] if args.from_checkpoint else None,
         prev_i=checkpoint['i'] if args.from_checkpoint else None,
@@ -600,7 +618,8 @@ if __name__ == '__main__':
         experiment=args.experiment,
         add_dtw_term=args.add_dtw_term,
         transform=args.transform,
-        on_phase=args.on_phase
+        on_phase=args.on_phase,
+        add_noise=args.add_noise
     )
 
 '''

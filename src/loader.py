@@ -130,7 +130,6 @@ class StegoDataset(torch.utils.data.Dataset):
             image_root: str,
             audio_root: str,
             folder: str,
-            #mappings: dict,
             rgb: bool = True,
             transform: str = 'cosine',
             image_extension: str = "jpg",
@@ -180,9 +179,7 @@ class StegoDataset(torch.utils.data.Dataset):
 
     def __getitem__(self,index):
         rand_indexer = random.randint(0, self._MAX_AUDIO_LIMIT - 1)
-        #rand_indexer_i = random.randint(0, self._MAX_LIMIT - 1)
 
-        # per la imatge s'hauria de fer servir index
         img_path = self._images[index]
         audio_path = self._audios[rand_indexer]
 
@@ -208,18 +205,11 @@ def loader(set='train', rgb=True, transform='cosine'):
     either [cosine] or [fourier].
     """
     print('Preparing dataset...')
-    '''
-    mappings = {}
-    with open(f'{MY_DATA_FOLDER}/untitled.txt') as f:
-        for line in f:
-            (key, i, img) = line.split()
-            mappings[key] = img
-    '''
+
     dataset = StegoDataset(
         image_root=DATA_FOLDER,
         audio_root=AUDIO_FOLDER,
         folder=set,
-        #mappings=mappings,
         rgb=rgb,
         transform=transform
     )

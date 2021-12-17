@@ -18,7 +18,6 @@ def fix_permutation(input,idx):
 
 
 def permutation(input):
-    #torch.manual_seed(0)
     idx = torch.randperm(input.nelement())
     input = input.reshape(-1)[idx].view(input.size())
     return input, idx
@@ -234,6 +233,8 @@ class StegoUNet(nn.Module):
         frame_length=4096, 
         frame_step=62,
         switch=False,
+        permute=False,
+        permute_type=None,
         architecture='resindep'
     ):
         super().__init__()
@@ -255,7 +256,7 @@ class StegoUNet(nn.Module):
         self.noise_amplitude = noise_amplitude
 
         #stft initialization
-        if transform == 'fourier':
+        if (self.add_noise) and (self.noise_kind is not None) and (self.noise_amplitude is not None) and transform == 'fourier':
             self.stft = STFT(filter_length=2 ** 11 - 1,
                         hop_length=132,
                         win_length=2 ** 11 - 1,
@@ -264,10 +265,11 @@ class StegoUNet(nn.Module):
         self.transform = transform
 
         # permute parameters
-        print('inicialitzat')
         self.i = 0
+        self.permute = permute
+        self.permute_type = permute_type
 
-    def forward(self, secret, cover, phase):
+    def forward(self, secret, cover, phase): #noise phase
         # Create a new channel with 0 (R,G,B) -> (R,G,B,0)
         zero = torch.zeros(1, 1, 256, 256).type(torch.float32).cuda()
         secret = torch.cat((secret,zero),1)
@@ -276,23 +278,27 @@ class StegoUNet(nn.Module):
             hidden_signal = self.PHN(secret, cover)
         else:
             hidden_signal = self.PHN(secret)
-        #if self.i==0:
+        if self.i==0 and self.permute_type == 'FIX' and self.permute:
             #permute parameters
-            #print('fixat')
-            #self.idx_fix = fix_permutation_idx(hidden_signal)  # aixo nomes sha de fer una vegada
+            self.idx_fix = fix_permutation_idx(hidden_signal)
+            self.i = 1000
 
-       # self.i = self.i + 1
-        # using fix permutation
-       # hidden_signal = fix_permutation(hidden_signal,self.idx_fix)
+        if self.permute and self.permute_type == 'FIX':
+            # using fix permutation
+            hidden_signal = fix_permutation(hidden_signal,self.idx_fix)
 
         # Hidden signal permutation
-        #hidden_signal, idx = permutation(hidden_signal)
+        elif self.permute and self.permute_type == 'DIFF':
+            hidden_signal, idx = permutation(hidden_signal)
 
         # Residual connection
         container = cover + hidden_signal if (self._architecture != 'plaindep') else hidden_signal
 
         # inverse permutation
-        #container_rn = unpermutation(container, idx) #senyal que ha d'anar a la reveal network #recordar canviar l'idx
+        if self.permute and self.permute_type == 'DIFF':
+            container_rn = unpermutation(container, idx)
+        elif self.permute and self.permute_type == 'FIX':
+            container_rn = unpermutation(container, self.idx_fix)
 
         if (self.add_noise) and (self.noise_kind is not None) and (self.noise_amplitude is not None):
 
@@ -317,7 +323,6 @@ class StegoUNet(nn.Module):
                     frame_step=self.frame_step
                 ).unsqueeze(0).cuda()
             else:
-                print('adding noise')
                 # Switch domain
                 container_wav = self.stft.inverse(container.squeeze(1).cuda(), phase.squeeze(1).cuda())
                 # Generate spectral noise
@@ -349,6 +354,9 @@ class StegoUNet(nn.Module):
                 ).unsqueeze(0).unsqueeze(0)
 
             # Reveal image
-            revealed = self.RN(container) #container_rn
+            if self.permute:
+                revealed = self.RN(container_rn)
+            else:
+                revealed = self.RN(container)
 
         return container, revealed
