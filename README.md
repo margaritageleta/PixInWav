@@ -1,1 +1,1 @@
-# PixInWav: Hidden Pixels in their Spoken Narratives
+# Hidden Pixels in their Spoken Narratives
