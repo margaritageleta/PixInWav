@@ -199,21 +199,16 @@ class RevealNet(nn.Module):
                 Up(64, 1, image_alone=True, magphase=True)
             ])
 
-        # If phase_type == '2D' or '3D', create the conv kernel to merge afterwards
-        if phase_type == '2D':
-            self.mag_phase_join = nn.Conv2d(6,3,1)
-        elif phase_type == '3D':
-            self.mag_phase_join = nn.Conv3d(2,1,1)
 
     def forward(self, ct, ct_phase=None):
 
-        # ct is not None if and only if phase_type != None
-        # If using the phase only, 'ct' is the phase, else the magnitude
-        assert not (self.phase_type is None and ct_phase is not None)
-        assert not (self.phase_type is not None and ct_phase is None)
+        # ct_phase is not None if and only if phase_type == RN
+        # For other phase_types, ct can be the phase or the magnitude
+        assert not (self.phase_type == 'RN'  and ct_phase is None)
+        assert not (self.phase_type != 'RN'  and ct_phase is not None)
 
         im_enc = [F.interpolate(ct, size=(256 * 2, 256 * 2))]
-        if ct_phase is not None:
+        if self.phase_type == 'RN':
             im_enc_phase = [F.interpolate(ct_phase, size=(256 * 2, 256 * 2))]
 
         if self.phase_type == 'RN':
@@ -222,45 +217,19 @@ class RevealNet(nn.Module):
 
         for enc_layer_idx, enc_layer in enumerate(self.im_encoder_layers):
             im_enc.append(enc_layer(im_enc[-1]))
-            if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
-                im_enc_phase.append(enc_layer(im_enc_phase[-1]))
-
         
         im_dec = [im_enc.pop(-1)]
-        if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
-            im_dec_phase = [im_enc_phase.pop(-1)]
 
         for dec_layer_idx, dec_layer in enumerate(self.im_decoder_layers):
             im_dec.append(
                 dec_layer(im_dec[-1], 
                 im_enc[-1 - dec_layer_idx])
             )
-            if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
-                im_dec_phase.append(
-                    dec_layer(im_dec_phase[-1], 
-                    im_enc_phase[-1 - dec_layer_idx])
-                )
         
         # Pixel Unshuffle and delete 4th component
         revealed = torch.narrow(self.pixel_unshuffle(im_dec[-1]), 1, 0, 3)
 
-        if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
-            # Postprocess phase
-            revealed_phase = torch.narrow(self.pixel_unshuffle(im_dec_phase[-1]), 1, 0, 3)
-
-            # Join with magnitude
-            if self.phase_type == 'mean':
-                return revealed.add(revealed_phase)*0.5
-            elif self.phase_type == '2D':
-                join = torch.cat((revealed,revealed_phase),1)
-                return self.mag_phase_join(join)
-            elif self.phase_type == '3D':
-                revealed = revealed.unsqueeze(0)
-                revealed_phase = revealed_phase.unsqueeze(0)
-                join = torch.cat((revealed,revealed_phase),1)
-                return self.mag_phase_join(join).squeeze(1)
-        else:
-            return revealed
+        return revealed
 
 
 class StegoUNet(nn.Module):
@@ -276,6 +245,8 @@ class StegoUNet(nn.Module):
         architecture='resindep',
         phase_type=None
     ):
+
+        self.use_phn_phase = True
         super().__init__()
         # Architecture type
         self._architecture = architecture
@@ -283,6 +254,12 @@ class StegoUNet(nn.Module):
         # Sub-networks
         self.PHN = PrepHidingNet(self._architecture, transform)
         self.RN = RevealNet(phase_type)
+
+        if phase_type == 'mean' or phase_type == '2D' or phase_type == '3D':
+            # Use different hiding and revealing nets for the phase
+            if self.use_phn_phase: self.PHN_phase = PrepHidingNet(self._architecture, transform)
+            self.RN_phase = RevealNet(phase_type)
+            
 
         # STDCT parameters
         self.frame_length = frame_length
@@ -296,6 +273,12 @@ class StegoUNet(nn.Module):
 
         # Phase parameters
         self.phase_type=phase_type # phase_type != None implies not on_phase
+
+        # If phase_type == '2D' or '3D', create the conv kernel to merge afterwards
+        if phase_type == '2D':
+            self.mag_phase_join = nn.Conv2d(6,3,1)
+        elif phase_type == '3D':
+            self.mag_phase_join = nn.Conv3d(2,1,1)
 
     def forward(self, secret, cover, cover_phase=None):
 
@@ -312,11 +295,15 @@ class StegoUNet(nn.Module):
             hidden_signal = self.PHN(secret, cover)
         else:
             hidden_signal = self.PHN(secret)
+            if self.use_phn_phase: hidden_signal_phase = self.PHN_phase(secret)
 
         # Residual connection
         container = cover + hidden_signal if (self._architecture != 'plaindep') else hidden_signal
         if cover_phase is not None:
-            container_phase = cover_phase + hidden_signal if (self._architecture != 'plaindep') else hidden_signal
+            if self.use_phn_phase:
+                container_phase = cover_phase + hidden_signal_phase if (self._architecture != 'plaindep') else hidden_signal_phase
+            else:
+                container_phase = cover_phase + hidden_signal if (self._architecture != 'plaindep') else hidden_signal
 
         if (self.add_noise) and (self.noise_kind is not None) and (self.noise_amplitude is not None):
             # Switch domain
@@ -359,9 +346,28 @@ class StegoUNet(nn.Module):
                 ).unsqueeze(0).unsqueeze(0)
 
             # Reveal image
-            if cover_phase is not None:
+            if self.phase_type == 'mean' or self.phase_type == '2D' or self.phase_type == '3D':
+                revealed = self.RN(container)
+                # Also reveal the phase
+                revealed_phase = self.RN_phase(container_phase)
+
+                # Join with magnitude
+                if self.phase_type == 'mean':
+                    revealed = revealed.add(revealed_phase)*0.5
+                elif self.phase_type == '2D':
+                    join = torch.cat((revealed,revealed_phase),1)
+                    revealed = self.mag_phase_join(join)
+                elif self.phase_type == '3D':
+                    revealed = revealed.unsqueeze(0)
+                    revealed_phase = revealed_phase.unsqueeze(0)
+                    join = torch.cat((revealed,revealed_phase),1)
+                    revealed = self.mag_phase_join(join).squeeze(1)
+            elif self.phase_type == 'RN':
                 revealed = self.RN(container, container_phase)
             else:
                 revealed = self.RN(container)
 
+        if cover_phase is not None:
+            # If using mag+phase, return both containers
+            return (container, container_phase), revealed
         return container, revealed

@@ -249,7 +249,8 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 				if phase_type is None:
 					containers, revealed = model(secrets, phase)
 				else:
-					containers, revealed = model(secrets, covers, phase)
+					# If using mag+phase, get both mag and phase containers
+					(containers, containers_phase), revealed = model(secrets, covers, phase)
 			else: containers, revealed = model(secrets, covers)
 
 			if transform == 'cosine':
@@ -260,10 +261,20 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			
 			elif transform == 'fourier': 
 				if on_phase:
-					original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
-					container_wav = stft.inverse(covers.squeeze(1), containers.squeeze(1))
-					container_2x = stft.transform(container_wav)[1].unsqueeze(0)
-					loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x, revealed, beta)
+					if phase_type == 'None':
+						# Use only the phase as containe. Compute MSE only on the phase
+						original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
+						container_wav = stft.inverse(covers.squeeze(1), containers.squeeze(1))
+						container_2x = stft.transform(container_wav)[1].unsqueeze(0)
+						loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x, revealed, beta)
+					else:
+						# Using magnitude+phase. Compute both MSEs
+						original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
+						container_wav = stft.inverse(covers.squeeze(1), containers.squeeze(1))
+						container_phase_wav = stft.inverse(covers.squeeze(1), containers_phase.squeeze(1))
+						container_2x_phase = stft.transform(container_phase_wav)[1].unsqueeze(0)
+						container_2x_mag = stft.transform(container_wav)[0].unsqueeze(0)
+						loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers_phase, container_2x_phase, revealed, beta, covers, containers, container_2x_mag)
 				else:
 					original_wav = stft.inverse(covers.squeeze(1), phase.squeeze(1))
 					container_wav = stft.inverse(containers.squeeze(1), phase.squeeze(1))
@@ -283,7 +294,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 			ssim_image = ssim(secrets, revealed)
 			l1_loss = l1wavLoss(original_wav.cpu().unsqueeze(0), container_wav.cpu().unsqueeze(0))
 			objective_loss = loss 
-			objective_loss += 0.01 * l1_loss
+			objective_loss += 1 * l1_loss
 			with torch.autograd.set_detect_anomaly(True):
 				objective_loss.backward()
 			optimizer.step()
@@ -317,7 +328,7 @@ def train(model, tr_loader, vd_loader, beta, lr, epochs=5, prev_epoch = None, pr
 				PSNR {psnr_image.detach().item()},\
 				SSIM {ssim_image.detach().item()},\
 				L1 {l1_loss.detach().item()}' 
-			)
+				)
 
 			# Log train average loss to wandb
 			wandb.log({
@@ -439,7 +450,7 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 				if phase_type is None:
 					containers, revealed = model(secrets, phase)
 				else:
-					containers, revealed = model(secrets, covers, phase)
+					(containers, containers_phase), revealed = model(secrets, covers, phase)
 			else: containers, revealed = model(secrets, covers)
 
 			if i == 0:
@@ -455,10 +466,19 @@ def validate(model, vd_loader, beta, transform='cosine', transform_constructor=N
 				loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
 			elif transform == 'fourier':
 				if on_phase:
-					container_wav = transform_constructor.inverse(covers.squeeze(1), containers.squeeze(1))
-					container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
-					loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x, revealed, beta)
-				else:	
+					if phase_type == 'None':
+						# Use only the phase as container. Compute MSE only on the phase
+						container_wav = transform_constructor.inverse(covers.squeeze(1), containers.squeeze(1))
+						container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
+						loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers, container_2x, revealed, beta)
+					else:
+						# Using magnitude+phase. Compute both MSEs
+						container_wav = transform_constructor.inverse(covers.squeeze(1), containers.squeeze(1))
+						container_phase_wav = transform_constructor.inverse(covers.squeeze(1), containers_phase.squeeze(1))
+						container_2x_phase = transform_constructor.transform(container_phase_wav)[1].unsqueeze(0)
+						container_2x_mag = transform_constructor.transform(container_wav)[0].unsqueeze(0)
+						loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, phase, containers_phase, container_2x_phase, revealed, beta, covers, containers, container_2x_mag)
+				else:
 					container_wav = transform_constructor.inverse(containers.squeeze(1), phase.squeeze(1))
 					container_2x = transform_constructor.transform(container_wav)[0].unsqueeze(0)
 					loss, loss_cover, loss_secret, loss_spectrum = StegoLoss(secrets, covers, containers, container_2x, revealed, beta)
@@ -583,7 +603,7 @@ if __name__ == '__main__':
 		vd_loader=test_loader, 
 		beta=args.beta, 
 		lr=args.lr, 
-		epochs=4,
+		epochs=2,
 		slide=15,
 		prev_epoch=checkpoint['epoch'] if args.from_checkpoint else None,  
 		prev_i=checkpoint['i'] if args.from_checkpoint else None,

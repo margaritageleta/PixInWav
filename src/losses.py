@@ -8,7 +8,7 @@ from math import exp
 
 def SNR(cover, container, phase, transform, transform_constructor=None, on_phase=False):
 	"""
-    Computes SNR (Signal-to-Noise-Ratio)
+	Computes SNR (Signal-to-Noise-Ratio)
 	metric between cover and container signals.
 	First, it computes i[transform] over the spectrograms.
 	Transform can be either [cosine] or [fourier]
@@ -17,7 +17,7 @@ def SNR(cover, container, phase, transform, transform_constructor=None, on_phase
 	Listeners will barely notice anything better than 20dB, 
 	and intelligibility is still pretty good at 0dB SNR "
 	> http://www1.icsi.berkeley.edu/Speech/faq/speechSNR.html
-    """
+	"""
 	if transform == 'cosine':
 		cover_wav = isdct(cover.squeeze(0).squeeze(0).cpu().detach().numpy(), frame_step=62)
 		noise_wav = isdct((container - cover).squeeze(0).squeeze(0).cpu().detach().numpy(), frame_step=62)
@@ -36,15 +36,15 @@ def SNR(cover, container, phase, transform, transform_constructor=None, on_phase
 	return 10 * np.log10(signal / noise)
 
 def PSNR(secret, revealed):
-    """
-    Computes PSNR (Peak Signal to Noise Ratio)
-    metric between secret and revealed signals.
-    """
-    s, r = (secret * 255.0), (revealed * 255.0)
+	"""
+	Computes PSNR (Peak Signal to Noise Ratio)
+	metric between secret and revealed signals.
+	"""
+	s, r = (secret * 255.0), (revealed * 255.0)
 
-    mse = torch.mean((s - r) ** 2)
-    if mse == 0: mse = torch.Tensor([10e-46])
-    return 20 * torch.log10(255.0 / torch.sqrt(mse))
+	mse = torch.mean((s - r) ** 2)
+	if mse == 0: mse = torch.Tensor([10e-46])
+	return 20 * torch.log10(255.0 / torch.sqrt(mse))
 
 def gaussian(window_size, sigma):
 	"""
@@ -134,7 +134,7 @@ def ssim(img1, img2, window_size = 11, size_average = True):
 	
 	return _ssim(img1, img2, window, window_size, channel, size_average)
 
-def StegoLoss(secret, cover, container, container_2x, revealed, beta):
+def StegoLoss(secret, cover, container, container_2x, revealed, beta, cover2=None, container2=None, container_2x2=None):
 	"""
 	Our custom StegoLoss function: a convex combination of two reconstruction 
 	losses (image: [loss_secret], spectrogram: [loss_cover]) where both terms 
@@ -142,8 +142,21 @@ def StegoLoss(secret, cover, container, container_2x, revealed, beta):
 
 	The optional DTW term may be added outside this function in the trainer script.
 	"""
+	# The ...2 data are the magnitude data to be used only with mag+phase
+
+	assert (cover2 is None and container2 is None) or (cover2 is not None and container2 is not None)
+
 	loss_cover = F.mse_loss(cover, container)
+	print('Original cover:', loss_cover)
+	if cover2 is not None:
+		# Loss cover is adding MSEs for the magnitude and phase
+		loss_cover += F.mse_loss(cover2, container2)
+		print('Modified cover:', loss_cover)
 	loss_secret = nn.L1Loss()
 	loss_spectrum = F.mse_loss(container, container_2x)
+	if container_2x2 is not None:
+		# Also add to the loss spectrum in the mag+phase case
+		loss_spectrum += F.mse_loss(container2, container_2x2)
 	loss = (1 - beta) * (loss_cover) + beta * loss_secret(secret, revealed)
+	print('Total loss:', loss)
 	return loss, loss_cover, loss_secret(secret, revealed), loss_spectrum
