@@ -147,16 +147,15 @@ def StegoLoss(secret, cover, container, container_2x, revealed, beta, cover2=Non
 	assert (cover2 is None and container2 is None) or (cover2 is not None and container2 is not None)
 
 	loss_cover = F.mse_loss(cover, container)
-	print('Original cover:', loss_cover)
 	if cover2 is not None:
 		# Loss cover is adding MSEs for the magnitude and phase
-		loss_cover += F.mse_loss(cover2, container2)
-		print('Modified cover:', loss_cover)
+		# loss_cover += F.mse_loss(cover2, container2)
+		# Try ignoring phase MSE, only use magnitude
+		loss_cover = F.mse_loss(cover2, container2)
 	loss_secret = nn.L1Loss()
 	loss_spectrum = F.mse_loss(container, container_2x)
 	if container_2x2 is not None:
 		# Also add to the loss spectrum in the mag+phase case
 		loss_spectrum += F.mse_loss(container2, container_2x2)
 	loss = (1 - beta) * (loss_cover) + beta * loss_secret(secret, revealed)
-	print('Total loss:', loss)
 	return loss, loss_cover, loss_secret(secret, revealed), loss_spectrum
