@@ -6,7 +6,18 @@ This repository includes a python implemenation of `StegoUNet`, a deep neural ne
 
 ![alt text](front/img/example.png "Example")
 
-If you find this paper or implementation useful, please consider citing our work:
+If you find this paper or implementation useful, please consider citing our [ICASSP paper](https://ieeexplore.ieee.org/document/9746191):
+```{tex}
+@INPROCEEDINGS{geleta2021pixinwav,  
+      author={Geleta, Margarita and Puntí, Cristina and McGuinness, Kevin and Pons, Jordi and Canton, Cristian and Giro-i-Nieto, Xavier},  
+      booktitle={ICASSP 2022 - 2022 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},   
+      title={Pixinwav: Residual Steganography for Hiding Pixels in Audio},   
+      year={2022},  volume={},  number={},  
+      pages={2485-2489},  
+      doi={10.1109/ICASSP43922.2022.9746191}
+}
+```
+And/or the [ArXiv preprint](https://arxiv.org/abs/2106.09814):
 ```{tex}
 @misc{geleta2021pixinwav,
       title={PixInWav: Residual Steganography for Hiding Pixels in Audio}, 
@@ -125,4 +136,4 @@ train(
 
 ## License
 
-**NOTICE**: This software is available for use free of charge for academic research use only. Commercial users, for profit companies or consultants, and non-profit institutions not qualifying as *academic research* must contact `mgeleta@uci.edu` for a separate license. 
+**NOTICE**: This software is available for use free of charge for academic research use only. Commercial users, for profit companies or consultants, and non-profit institutions not qualifying as *academic research* must contact `geleta@berkeley.edu` for a separate license. 
